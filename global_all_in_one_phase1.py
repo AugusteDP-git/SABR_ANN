@@ -1,29 +1,14 @@
 # global_all_in_one_phase1.py
 from __future__ import annotations
-import os, time, argparse, pickle
-from os.path import join
+
+import os
+import time
+import pickle
+from os.path import join, isfile
+
 import numpy as np
 import torch
 import torch.nn as nn
-
-from src.data_vector import sample_domain_grid_and_random
-from src.data_vector import FIG
-from src.nn_arch import GlobalSmileNetVector
-from src.lr_schedules import PaperStyleLR
-from src.plotting_vector import plot_fig
-
-#python3 global_all_in_one_phase1.py \
-# --epochs 500 --batch 512 \
-#  --init-lr 3e-3 --min-lr 1e-8 \
-#  --gamma 0.9990 \
-#  --cutoff-frac 0.85 --after-cutoff-gamma 0.9994 \
-#  --bump 1.015 --patience 8 --tol 3e-4 \
-#  --bump-hold 3 --max-bumps 200 --ema-beta 0.996 \
-#  --out-dir night_runs/phase1_run
-import os, time, pickle
-from os.path import join, isfile
-import numpy as np
-import torch, torch.nn as nn
 
 from src.data_vector import sample_domain_grid_and_random, FIG
 from src.nn_arch import GlobalSmileNetVector
@@ -32,7 +17,11 @@ from src.plotting_vector import plot_fig
 
 # ---------------------------- Device & seeds ----------------------------
 SEED = 123
-DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+_FORCED_DEVICE = os.getenv("GLOBAL_DEVICE", "").strip().lower()
+if _FORCED_DEVICE:
+    DEVICE = torch.device(_FORCED_DEVICE)
+else:
+    DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 torch.manual_seed(SEED); np.random.seed(SEED)
 
 # ----------------------- Global training knobs (P1) ---------------------
@@ -50,7 +39,6 @@ T_COL        = 0
 SHORT_BOUND  = 1.0
 
 # ----------------------- Per-width overrides (P1) -----------------------
-# Matches the stable set you ran successfully before.
 PER_WIDTH = {
     #   W   :              init_lr,  gamma,   patience,  tol
     250: dict(init_lr=3.0e-3, gamma=0.9990, patience= 8, tol=5e-4),
@@ -173,7 +161,7 @@ def main():
                 m.eval()
                 bucket.append(((W,), m))
             else:
-                print(f("[Plot] skip missing: {ckpt}"))
+                print(f"[Plot] skip missing: {ckpt}")
 
     for fig_id in (2, 3, 4):
         T = float(FIG[fig_id][0])        # tenor in years

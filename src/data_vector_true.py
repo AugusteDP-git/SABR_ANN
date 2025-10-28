@@ -88,6 +88,14 @@ def _safe_iv_smile(F: float, K: np.ndarray, T: float, s0: float, rho: float, xi:
     return None
 
 def _one_sample(F: float, T: float, s0: float, rho: float, xi: float, adi_kwargs: Dict[str, Any]) -> tuple | None:
+    # Adaptive domain for short maturities to ensure accuracy
+    adi_kwargs = adi_kwargs.copy()
+    if T <= 0.1:  # Short maturity threshold
+        # Tighten domain: sigma * sqrt(T) ~ s0 * sqrt(T), use +/- 0.02 or so
+        x_range = max(0.01, 5.0 * s0 * np.sqrt(T))  # Conservative factor
+        adi_kwargs['x_lo'] = -x_range
+        adi_kwargs['x_hi'] = x_range
+        adi_kwargs['NT'] = max(adi_kwargs.get('NT', 200), 800)  # Increase time steps for accuracy
     xln, K = ten_strikes(F, s0, rho, xi, T)
     vols = _safe_iv_smile(F, K, T, s0, rho, xi, adi_kwargs=adi_kwargs)
     if vols is None:
@@ -112,14 +120,14 @@ def _env_bool(name: str, default: bool) -> bool:
     return str(v).strip().lower() in {"1","true","yes","y","on"}
 
 def _load_preset() -> Dict[str, Any]:
-    preset = os.environ.get("PHASE2_PRESET", "tiny").lower()
+    preset = os.environ.get("PHASE2_PRESET", "paper").lower()  # Default to paper for better results
     jobs   = _env_int("PHASE2_JOBS", os.cpu_count() or 4)
     cache  = _default_cache_path(preset)
 
     presets = {
         # small quick smoke test
         "tiny": dict(
-            include_grid=False,                  # <— only random in tiny
+            include_grid=False,                  # tiny preset uses only random sampling
             rand_train=2_000, val=500,
             adi=dict(NX=81, NY=41, NT=80, theta=0.5, x_lo=-3.0, x_hi=3.0, y_lo=-2.0, y_hi=2.0),
         ),
@@ -137,7 +145,7 @@ def _load_preset() -> Dict[str, Any]:
         ),
         # *** PAPER recipe ***
         "paper": dict(
-            include_grid=True,                   # <— deterministic 100k grid ON
+            include_grid=True,                   # add the deterministic 100k grid
             # 150k random + 100k grid = 250k train
             rand_train=150_000, val=50_000,
             adi=dict(NX=121, NY=61, NT=220, theta=0.5, x_lo=-3.5, x_hi=3.5, y_lo=-2.0, y_hi=2.0),
@@ -196,7 +204,7 @@ def _do_one_param(p: Tuple[float,float,float,float], adi_kwargs: Dict[str,Any]):
 def _random_param_list(n: int) -> List[Tuple[float,float,float,float]]:
     ps: List[Tuple[float,float,float,float]] = []
     for _ in range(n):
-        T  = 10 ** np.random.uniform(np.log10(T_MIN), np.log10(T_MAX))
+        T  = np.random.uniform(T_MIN, T_MAX)  # match Phase-1 sampling
         s0 = np.random.uniform(SIG0_MIN, SIG0_MAX)
         rho= np.random.uniform(RHO_MIN,  RHO_MAX)
         xi_lo, xi_hi = xi_bounds_for_T(float(T))
@@ -218,6 +226,18 @@ def _parallel_map_streaming(func, items: List[tuple], n_jobs: int,
     total = len(items)
     if total == 0:
         return []
+
+    # Allow single-process fall-back when the caller sets PHASE2_JOBS=0/1.
+    if n_jobs <= 1:
+        out = []
+        t0 = time.time()
+        for i, item in enumerate(items, 1):
+            out.append(func(item))
+            if print_every and time.time() - t0 >= print_every:
+                print(f"[FDM:{stage}] {i:6d}/{total:<6d} ({i/total:6.2%})",
+                      flush=True)
+                t0 = time.time()
+        return out
 
     max_inflight = max(n_jobs, n_jobs * max_inflight_factor)
     out = [None] * total
@@ -272,12 +292,25 @@ def _parallel_map_streaming(func, items: List[tuple], n_jobs: int,
     return out
 
 # ------------------------ Public API (used by Phase-2 trainer) ------------------
+def load_phase2_cached(cache_path: str):
+    """
+    Load cached Phase-2 dataset from npz file.
+    Returns (X_tr, Y_tr, X_val, Y_val, meta) or None if not found.
+    """
+    if not os.path.isfile(cache_path):
+        return None
+    data = np.load(cache_path, allow_pickle=True)
+    meta = json.loads(data['meta'].item())
+    return data['X_tr'], data['Y_tr'], data['X_val'], data['Y_val'], meta
+
 def sample_domain_grid_and_random(n_random_train: int = 150_000,
-                                  n_val: int = 50_000):
+                                  n_val: int = 50_000,
+                                  include_grid: bool | None = None):
     cfg = _load_preset()
     jobs = cfg["jobs"]
     adi  = cfg["adi"]
-    include_grid = cfg["include_grid"]
+    if include_grid is None:
+        include_grid = cfg["include_grid"]
 
     print(f"[FDM] (API) preset={cfg['preset']} include_grid={include_grid} "
           f"rand_train={n_random_train} val={n_val} n_jobs={jobs}")
@@ -289,7 +322,7 @@ def sample_domain_grid_and_random(n_random_train: int = 150_000,
         grid_params = _grid_param_list_for_paper()
         print(f"[FDM:grid] {len(grid_params)} tuples (paper grid) | n_jobs={jobs}")
         grid_items = _parallel_map_streaming(
-            lambda p: _do_one_param(p, adi), grid_params, jobs, adi_kwargs=None,
+            _do_param_sample, [(F0, p[0], p[1], p[2], p[3], adi) for p in grid_params], jobs,
             stage="grid", print_every=5.0
         )
         train_items.extend([it for it in grid_items if it is not None])
@@ -297,7 +330,7 @@ def sample_domain_grid_and_random(n_random_train: int = 150_000,
     r_train_params = _random_param_list(n_random_train)
     print(f"[FDM:train] {len(r_train_params)} random tuples | n_jobs={jobs}")
     rnd_items = _parallel_map_streaming(
-        lambda p: _do_one_param(p, adi), r_train_params, jobs, adi_kwargs=None,
+        _do_param_sample, [(F0, p[0], p[1], p[2], p[3], adi) for p in r_train_params], jobs,
         stage="train", print_every=5.0
     )
     train_items.extend([it for it in rnd_items if it is not None])
@@ -305,7 +338,7 @@ def sample_domain_grid_and_random(n_random_train: int = 150_000,
     r_val_params = _random_param_list(n_val)
     print(f"[FDM:val]   {len(r_val_params)} random tuples | n_jobs={jobs}")
     val_items = _parallel_map_streaming(
-        lambda p: _do_one_param(p, adi), r_val_params, jobs, adi_kwargs=None,
+        _do_param_sample, [(F0, p[0], p[1], p[2], p[3], adi) for p in r_val_params], jobs,
         stage="val", print_every=5.0
     )
 
@@ -341,7 +374,7 @@ def _main():
         grid_params = _grid_param_list_for_paper()
         print(f"[FDM:grid] {len(grid_params)} tuples (paper grid) | n_jobs={jobs}")
         grid_items = _parallel_map_streaming(
-            lambda p: _do_one_param(p, adi), grid_params, jobs, adi_kwargs=None,
+            _do_param_sample, [(F0, p[0], p[1], p[2], p[3], adi) for p in grid_params], jobs,
             stage="grid", print_every=5.0
         )
         train_items.extend([it for it in grid_items if it is not None])
@@ -349,7 +382,7 @@ def _main():
     r_train_params = _random_param_list(rand_train)
     print(f"[FDM:train] {len(r_train_params)} parameter tuples | n_jobs={jobs}")
     rnd_items = _parallel_map_streaming(
-        lambda p: _do_one_param(p, adi), r_train_params, jobs, adi_kwargs=None,
+        _do_param_sample, [(F0, p[0], p[1], p[2], p[3], adi) for p in r_train_params], jobs,
         stage="train", print_every=5.0
     )
     train_items.extend([it for it in rnd_items if it is not None])
@@ -357,7 +390,7 @@ def _main():
     r_val_params = _random_param_list(val_n)
     print(f"[FDM:val]   {len(r_val_params)} parameter tuples | n_jobs={jobs}")
     val_items = _parallel_map_streaming(
-        lambda p: _do_one_param(p, adi), r_val_params, jobs, adi_kwargs=None,
+        _do_param_sample, [(F0, p[0], p[1], p[2], p[3], adi) for p in r_val_params], jobs,
         stage="val", print_every=5.0
     )
 
