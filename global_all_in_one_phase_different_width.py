@@ -1,4 +1,4 @@
-# global_all_in_one_phase1.py
+# global_all_in_one_phase_different_width.py
 from __future__ import annotations
 
 import os
@@ -18,35 +18,50 @@ from src.plotting_vector import plot_fig
 # ---------------------------- Device & seeds ----------------------------
 SEED = 123
 _FORCED_DEVICE = os.getenv("GLOBAL_DEVICE", "").strip().lower()
-if _FORCED_DEVICE:
-    DEVICE = torch.device(_FORCED_DEVICE)
-else:
-    DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+DEVICE = torch.device(_FORCED_DEVICE if _FORCED_DEVICE
+                      else ("mps" if torch.backends.mps.is_available() else "cpu"))
 torch.manual_seed(SEED); np.random.seed(SEED)
 
-# ----------------------- Global training knobs (P1) ---------------------
-OUT_DIR      = "night_runs/phase1_run"
-EPOCHS       = 10_000          # extended run
+# ----------------------- Global training knobs --------------------------
+OUT_DIR      = "night_runs/phase1_width_sweep"
+EPOCHS       = 2_000
 BATCH        = 512
 MIN_LR       = 1e-8
-BUMP         = 1.008           # gentle nudge
-CUTOFF_FRAC  = 0.85            # last ~15% uses tail decay
-AFTER_GAMMA  = 0.9992          # slightly gentler tail
-BUMP_HOLD    = 1              # let bumps act
-MAX_BUMPS    = 1              # conservative number of bumps
-EMA_BETA     = 0.999           # smooth val for scheduler
+BUMP         = 1.008
+CUTOFF_FRAC  = 0.85
+AFTER_GAMMA  = 0.9992
+BUMP_HOLD    = 1
+MAX_BUMPS    = 1
+EMA_BETA     = 0.999
 T_COL        = 0
 SHORT_BOUND  = 1.0
 
-# ----------------------- Per-width overrides (P1) -----------------------
-PER_WIDTH = {
-    #   W   :              init_lr,  gamma,   patience,  tol
-    250: dict(init_lr=3.0e-3, gamma=0.9990, patience= 8, tol=5e-4),
-    500: dict(init_lr=3.0e-3, gamma=0.9990, patience= 8, tol=5e-4),
-    750: dict(init_lr=3.0e-3, gamma=0.9990, patience= 8, tol=5e-4),
-    1000:dict(init_lr=3.0e-3, gamma=0.9990, patience= 8, tol=5e-4),
+# ----------------------- Width groups (for plotting) --------------------
+WIDTHS_GROUPS = {
+    "small_mid": [16, 32, 64, 128, 256],
+    "mid_large": [256, 500, 1000, 2000, 3000],
 }
-WIDTHS = [250, 500, 750, 1000]
+# Train the union once, then plot per-group
+ALL_WIDTHS = sorted(set(sum(WIDTHS_GROUPS.values(), [])))
+
+# ----------------------- Per-width scheduler knobs ----------------------
+def cfg_for_width(W: int):
+    """
+    LR scheduler heuristics for 2k epochs.
+    Slightly smaller init_lr for very large widths to avoid noisy steps.
+    """
+    if W <= 32:
+        return dict(init_lr=2.5e-3, gamma=0.9990, patience=6,  tol=6e-4)
+    if W <= 128:
+        return dict(init_lr=3.0e-3, gamma=0.9990, patience=7,  tol=5e-4)
+    if W <= 256:
+        return dict(init_lr=3.0e-3, gamma=0.9989, patience=8,  tol=5e-4)
+    if W <= 1000:
+        return dict(init_lr=3.0e-3, gamma=0.9988, patience=9,  tol=4e-4)
+    if W <= 2000:
+        return dict(init_lr=2.0e-3, gamma=0.9988, patience=10, tol=4e-4)
+    # W >= 3000
+    return dict(init_lr=1.6e-3, gamma=0.9989, patience=11, tol=4e-4)
 
 # ----------------------------- Utilities --------------------------------
 def _assert_finite(name, t: torch.Tensor):
@@ -99,6 +114,7 @@ def train_one_width(hidden, Xtr, Ytr, Xva, Yva, *, epochs, batch,
         va_loss = va_sum / max(1, n)
         sched.step(va_loss)
 
+        # print each epoch (keeps your usual verbosity)
         print(f"  ep {ep:4d}/{epochs} | tr={tr_loss:.3e} | va={va_loss:.3e} | lr={opt.param_groups[0]['lr']:.2e}")
         if va_loss < best - 1e-9:
             best = va_loss
@@ -114,24 +130,26 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     print(f"[Device] {DEVICE.type}")
 
-    # Data + scalers (Phase 1 approximate labels)
+    # Data + scalers
     Xtr_raw, Ytr_raw, Xva_raw, Yva_raw, scalers = sample_domain_grid_and_random()
     with open(join(OUT_DIR, "scalers_vector.pkl"), "wb") as f:
         pickle.dump(scalers, f)
 
-    # Split once by T
+    # Split by tenor (short/long)
     (Xtr_s, Ytr_s), (Xtr_l, Ytr_l) = split_by_maturity(Xtr_raw, Ytr_raw)
     (Xva_s, Yva_s), (Xva_l, Yva_l) = split_by_maturity(Xva_raw, Yva_raw)
 
-    # Train each width, short & long, with per-width overrides
-    for W in WIDTHS:
-        cfg = PER_WIDTH[W]
+    # ---------------- Train once over the union of widths ----------------
+    for W in ALL_WIDTHS:
+        cfg = cfg_for_width(W)
         hidden = (W,)
         for regime, Xtr, Ytr, Xva, Yva in [
             ("short", Xtr_s, Ytr_s, Xva_s, Yva_s),
             ("long",  Xtr_l, Ytr_l, Xva_l, Yva_l),
         ]:
-            print(f"\n[Train] width={W} ({regime}) | init_lr={cfg['init_lr']:.2e}, gamma={cfg['gamma']}, patience={cfg['patience']}, tol={cfg['tol']}")
+            print(f"\n[Train] width={W} ({regime}) | "
+                  f"init_lr={cfg['init_lr']:.2e}, gamma={cfg['gamma']}, "
+                  f"patience={cfg['patience']}, tol={cfg['tol']}")
             m = train_one_width(
                 hidden, Xtr, Ytr, Xva, Yva,
                 epochs=EPOCHS, batch=BATCH,
@@ -145,37 +163,45 @@ def main():
             torch.save(m.state_dict(), join(ckdir, f"best_w{W}.pt"))
             print(f"[Save] → {ckdir}/best_w{W}.pt")
 
-    # Paper-style figs (2–4)
-    print("\n[Plot] Generating diagnostic figures (2–4)…")
+    # ---------------- Build model buckets per regime ---------------------
     with open(join(OUT_DIR, "scalers_vector.pkl"), "rb") as f:
         scalers_for_plot = pickle.load(f)
 
-    models_short, models_long = [], []
-    for W in WIDTHS:
-        for regime, bucket in (("short", models_short), ("long", models_long)):
+    ckpt_map = {"short": {}, "long": {}}
+    for W in ALL_WIDTHS:
+        for regime in ("short", "long"):
             ckpt = join(OUT_DIR, f"w{W}_{regime}", f"best_w{W}.pt")
             if isfile(ckpt):
                 m = GlobalSmileNetVector(hidden=(W,)).to(DEVICE)
                 state = torch.load(ckpt, map_location=DEVICE)
                 m.load_state_dict(state, strict=False)
                 m.eval()
-                bucket.append(((W,), m))
+                ckpt_map[regime][W] = ((W,), m)   # store tuple used by plot_fig
             else:
-                print(f"[Plot] skip missing: {ckpt}")
+                print(f"[Plot] missing checkpoint: {ckpt}")
 
+    # ---------------- Plot two figures for each scenario -----------------
     for fig_id in (2, 3, 4):
-        T = float(FIG[fig_id][0])        # tenor in years
-        use_short = (T <= SHORT_BOUND)   # <= so T=1Y is SHORT
-        bucket = models_short if use_short else models_long
-        category = "short" if use_short else "long"
-        print(f"[Plot] T={T:.6g} → {category}")
+        T = float(FIG[fig_id][0])
+        regime = "short" if (T <= SHORT_BOUND) else "long"
 
-        if not bucket:
-            print(f"[Plot] No models for {category} on fig {fig_id}; skipping.")
-            continue
+        for group_name, group_widths in WIDTHS_GROUPS.items():
+            # Build the model list in the plotting order
+            selected = []
+            for W in group_widths:
+                item = ckpt_map[regime].get(W, None)
+                if item:
+                    selected.append(item)
+                else:
+                    print(f"[Plot] skip missing W={W} for {regime}")
 
-        out_path = join(OUT_DIR, f"fig_vector_{fig_id}_{category}.png")
-        plot_fig(fig_id, scalers_for_plot, bucket, out_path, device=DEVICE)
-        print(f"[Plot] Saved {out_path}")
+            if not selected:
+                print(f"[Plot] No models to plot for {regime} / group={group_name} / fig={fig_id}")
+                continue
+
+            out_path = join(OUT_DIR, f"fig_vector_{fig_id}_{regime}_{group_name}.png")
+            print(f"[Plot] fig={fig_id} regime={regime} group={group_name} → {out_path}")
+            plot_fig(fig_id, scalers_for_plot, selected, out_path, device=DEVICE)
+
 if __name__ == "__main__":
     main()
