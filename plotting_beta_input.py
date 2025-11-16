@@ -4,19 +4,18 @@ import pickle
 from os.path import join, isfile
 
 from src.nn_arch import GlobalSmileNetVector
-from src.plotting_vector_beta3d import plot_3d_smile_beta_surface
-# ^ if your function name is still plot_3d_smile_beta_surface, keep that import as-is:
-# from src.plotting_vector_beta3d import plot_3d_smile_beta_surface
+from src.plotting_vector_beta3d import (
+    plot_3d_smile_beta_surface,
+    plot_3d_smile_beta_surface_params,
+)
 
 OUT_DIR = "night_runs/phase1_beta_input_run"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 1) Load scalers (common to all nets)
 with open(join(OUT_DIR, "scalers_vector.pkl"), "rb") as f:
     scalers = pickle.load(f)
 
-# 2) Define which networks to visualize
-WIDTHS = [250, 500, 750, 1000]
+WIDTHS  = [250, 500, 750, 1000]
 REGIMES = ["short", "long"]
 
 for W in WIDTHS:
@@ -32,19 +31,43 @@ for W in WIDTHS:
         model.load_state_dict(state, strict=False)
         model.eval()
 
-        out_png = join(OUT_DIR, f"fig3_beta_surface_w{W}_{regime}.png")
-        print(f"[Plot] → {out_png}")
+        if regime == "short":
+            # Use the original fig 3 scenario (T = 6M)
+            out_png = join(OUT_DIR, f"fig3_beta_surface_w{W}_short.png")
+            plot_3d_smile_beta_surface(
+                fig_id=3,
+                scalers=scalers,
+                model=model,
+                out_png=out_png,
+                device=DEVICE,
+                beta_min=0.0,
+                beta_max=1.0,
+                n_beta=21,
+                n_strikes=101,
+            )
+        else:
+            # Use a *long* scenario, e.g. T = 1.5Y, σ0=25%, ξ=50%, ρ=-20%
+            T_long   = 1.5
+            s0_long  = 0.25
+            xi_long  = 0.50
+            rho_long = -0.20
+            title = "(T = 1.5Y, σ₀ = 25%, ξ = 50%, ρ = −20%)"
 
-        plot_3d_smile_beta_surface(
-            fig_id=3,
-            scalers=scalers,
-            model=model,
-            out_png=out_png,
-            device=DEVICE,
-            beta_min=0.0,
-            beta_max=1.0,
-            n_beta=21,
-            n_strikes=101,
-        )
+            out_png = join(OUT_DIR, f"fig_long_beta_surface_w{W}_long.png")
+            plot_3d_smile_beta_surface_params(
+                T=T_long,
+                s0=s0_long,
+                xi=xi_long,
+                rho=rho_long,
+                title_suffix=title,
+                scalers=scalers,
+                model=model,
+                out_png=out_png,
+                device=DEVICE,
+                beta_min=0.0,
+                beta_max=1.0,
+                n_beta=21,
+                n_strikes=101,
+            )
 
-print("[Done] 3D β-surfaces generated for all available widths/regimes.")
+print("[Done] short+long β-surfaces plotted with correct maturities.")
