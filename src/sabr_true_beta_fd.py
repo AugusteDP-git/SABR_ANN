@@ -48,6 +48,7 @@ def sabr_true_iv_beta_fd(
     np.ndarray
         Implied vols with the broadcasted shape of np.broadcast(F, K, beta).
     """
+    print("Computing SABR true IVs (FD β) for given inputs...")
     F_arr = np.asarray(F, dtype=float)
     K_arr = np.asarray(K, dtype=float)
     beta_arr = np.asarray(beta, dtype=float)
@@ -75,7 +76,7 @@ def sabr_true_iv_beta_fd(
             NX=NX,
             NY=NY,
             NT=NT,
-            debug=False,
+            debug=True,
         )
         vol_slot[...] = iv
 

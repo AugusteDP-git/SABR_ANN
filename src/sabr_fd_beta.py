@@ -3,7 +3,7 @@ import numpy as np
 from math import sqrt, log
 from typing import Tuple
 from scipy.stats import norm
-
+from tqdm import tqdm
 
 # ------------------------ Black helpers (for IV back-out) ------------------------
 
@@ -175,7 +175,7 @@ def price_call_sabr_adi_beta(
     NX: int = 161,
     NY: int = 61,
     NT: int = 800,
-    debug: bool = False,
+    debug: bool = True,
 ) -> Tuple[float, float]:
     """
     Price a forward call under SABR (general β) by 2D ADI FD in (F, σ).
@@ -235,7 +235,7 @@ def price_call_sabr_adi_beta(
     C_V = np.zeros_like(V, dtype=float)
 
     # Time-stepping: τ from 0 to T (i.e. backward in calendar time)
-    for step in range(NT):
+    for step in tqdm(range(NT), desc ="[FD β] Time-stepping", disable=not debug):
         # Enforce F-boundaries at each step
         V[0, :] = 0.0                              # F=0 → option worthless
         V[-1, :] = F_grid[-1] - K                 # large F → ~F-K
