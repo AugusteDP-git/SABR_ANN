@@ -1,5 +1,8 @@
 # global_all_in_one_phase2_beta_input.py
 from __future__ import annotations
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 
 import os
 import time
@@ -31,7 +34,7 @@ OUT_DIR    = "night_runs/phase2_beta_input_run"     # Phase-2 output
 CACHE_PATH = os.environ.get("PHASE2_FD_BETA_CACHE", "datasets/phase2_fd_beta_input.npz")
 
 # ----------------------- Training knobs (Phase 2) ---------------------
-EPOCHS      = 1000
+EPOCHS      = 2000
 BATCH       = 512
 MIN_LR      = 1e-8
 BUMP        = 1.002
@@ -279,31 +282,6 @@ def main():
     print("\n[Plot] Generating 3D β surfaces for W=1000 if checkpoints exist…")
     with open(join(OUT_DIR, "scalers_vector.pkl"), "rb") as f:
         scalers_for_plot = pickle.load(f)
-
-    for regime in ("short", "long"):
-        ckpt = join(OUT_DIR, f"w1000_{regime}", "best_w1000.pt")
-        if not isfile(ckpt):
-            print(f"[Plot] skip regime={regime}, missing {ckpt}")
-            continue
-        model = GlobalSmileNetVector(in_dim=15, hidden=(1000,), out_dim=10).to(DEVICE)
-        state = torch.load(ckpt, map_location=DEVICE)
-        model.load_state_dict(state, strict=False)
-        model.eval()
-
-        # For fig_id=3 (T=6M) short; for long, use fig_id=4 (T=1Y)
-        fig_id = 3 if regime == "short" else 4
-        out_png = join(OUT_DIR, f"fig3d_beta_surface_W1000_{regime}.png")
-        plot_3d_smile_beta_surface(
-            fig_id=fig_id,
-            scalers=scalers_for_plot,
-            model=model,
-            out_png=out_png,
-            device=DEVICE,
-            beta_min=0.0,
-            beta_max=1.0,
-            n_beta=21,
-            n_strikes=101,
-        )
 
     print("\n[All done] Phase-2 β-FD training complete.")
 

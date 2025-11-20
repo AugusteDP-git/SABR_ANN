@@ -5,10 +5,11 @@ import os
 from typing import Tuple, Dict, Any
 
 import numpy as np
+from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from src.MaxK_minK import strike_ratio, ETA_S_MIN, ETA_S_MAX, ETA_SIGMA
-from src.sabr_true_beta_fd import sabr_true_iv_beta_fd
+from SABR_ANN.src.MaxK_minK import strike_ratio, ETA_S_MIN, ETA_S_MAX, ETA_SIGMA
+from SABR_ANN.src.sabr_true_beta_fd import sabr_true_iv_beta_fd
 
 # Global SABR forward
 F0 = 1.0
@@ -105,6 +106,20 @@ def _one_sample(
     return feats, targets
 
 
+def _one_sample_wrapper(
+    T, sigma0, xi, rho, beta,
+    fd_NX, fd_NY, fd_NT,
+):
+    """
+    Small wrapper so we can call it from joblib.
+    Returns (X, Y) or None.
+    """
+    return _one_sample(
+        F0, T, sigma0, xi, rho, beta,
+        fd_NX=fd_NX, fd_NY=fd_NY, fd_NT=fd_NT,
+    )
+
+
 def _sample_random_dataset(
     n: int,
     seed: int = 1234,
@@ -112,47 +127,56 @@ def _sample_random_dataset(
     fd_NX: int = 121,
     fd_NY: int = 41,
     fd_NT: int = 600,
+    n_jobs: int = 16,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Randomly sample (T, sigma0, xi, rho, beta) and build a dataset of size n.
     Resamples on failures.
 
-    NOTE: FD is expensive. You may want to keep n_train modest (e.g. 20k or 50k).
+    NOTE: FD is expensive. This uses joblib to parallelize over samples and
+    tqdm to track progress.
     """
     rng = np.random.default_rng(seed)
     X_list, Y_list = [], []
 
-    # tqdm bar over the *accepted* samples
-    pbar = tqdm(total=n, desc="[FD-β] building samples", unit="sample")
-
-    try:
+    with tqdm(total=n, desc="[FD-β] samples", unit="sample") as pbar:
         while len(X_list) < n:
-            T = float(rng.uniform(T_MIN, T_MAX))
-            sigma0 = float(rng.uniform(SIG0_MIN, SIG0_MAX))
-            rho = float(rng.uniform(RHO_MIN, RHO_MAX))
-            beta = float(rng.uniform(BETA_MIN, BETA_MAX))
-            xi_lo, xi_hi = xi_bounds_for_T(T)
-            xi = float(rng.uniform(xi_lo, xi_hi))
+            # propose a small batch of parameter tuples
+            batch_size = min(512, n - len(X_list))
+            params = []
+            for _ in range(batch_size):
+                T      = float(rng.uniform(T_MIN, T_MAX))
+                sigma0 = float(rng.uniform(SIG0_MIN, SIG0_MAX))
+                rho    = float(rng.uniform(RHO_MIN, RHO_MAX))
+                beta   = float(rng.uniform(BETA_MIN, BETA_MAX))
+                xi_lo, xi_hi = xi_bounds_for_T(T)
+                xi     = float(rng.uniform(xi_lo, xi_hi))
+                params.append((T, sigma0, xi, rho, beta))
 
-            sample = _one_sample(
-                F0, T, sigma0, xi, rho, beta,
-                fd_NX=fd_NX, fd_NY=fd_NY, fd_NT=fd_NT,
+            # run FD in parallel across this batch
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(_one_sample_wrapper)(
+                    T, sigma0, xi, rho, beta,
+                    fd_NX, fd_NY, fd_NT,
+                )
+                for (T, sigma0, xi, rho, beta) in params
             )
-            if sample is None:
-                # rejected sample: do NOT advance progress
-                continue
 
-            X, Y = sample
-            X_list.append(X)
-            Y_list.append(Y)
-            pbar.update(1)  # one more accepted sample
-
-    finally:
-        pbar.close()
+            # collect valid samples
+            for res in results:
+                if res is None:
+                    continue
+                X, Y = res
+                X_list.append(X)
+                Y_list.append(Y)
+                pbar.update(1)
+                if len(X_list) >= n:
+                    break
 
     X_arr = np.stack(X_list, axis=0).astype(np.float32)
     Y_arr = np.stack(Y_list, axis=0).astype(np.float32)
     return X_arr, Y_arr
+
 
 
 # -------------------------------------------------------------------
