@@ -203,7 +203,7 @@ def sample_domain_grid_and_random_fd_beta(
     if cache_path is None:
         cache_path = os.environ.get(
             "PHASE2_FD_BETA_CACHE",
-            "datasets/phase2_fd_beta_input.npz",
+            "datasets/phase2_fd_beta_input_big.npz",
         )
 
     print(

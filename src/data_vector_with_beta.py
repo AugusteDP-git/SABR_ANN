@@ -7,27 +7,23 @@ import numpy as np
 from src.MaxK_minK import strike_ratio, ETA_S_MAX, ETA_S_MIN, ETA_SIGMA
 from src.sabr_labels_beta import sabr_implied_vol_beta
 
-# Seeds
 SEED = 123
 np.random.seed(SEED); random.seed(SEED)
 
-# Global forward
 F0 = 1.0
 
-# Domains (same style as your existing code)
 T_MIN, T_MAX = 1.0 / 365.0, 2.0
 SIG0_MIN, SIG0_MAX = 0.05, 0.50
 RHO_MIN,  RHO_MAX  = -0.90, +0.90
 
-# ξ term structure heuristic, anchored at 1M
+
 TS = 1.0 / 12.0
 XI_1M_MIN, XI_1M_MAX = 0.05, 4.00
 
-# For completeness, reuse your FIG presets if you want later
 FIG = {
     2: (14.0/365.0, 0.30, 1.60, -0.60, "(T = 14D, σ₀ = 30%, ξ = 160%, ρ = −60%)", (25.0, 45.5)),
     3: (6.0/12.0,   0.30, 0.40,  0.00, "(T = 6M,  σ₀ = 30%, ξ = 40%,  ρ = 0%)",    (30.0, 34.5)),
-    4: (1.0,        0.20, 0.30, +0.30, "(T = 1Y,  σ₀ = 20%, ξ = 30%,  ρ = +30%)", (19.0, 26.5)),
+    4: (1.5,        0.20, 0.30, +0.30, "(T = 1.5Y,  σ₀ = 20%, ξ = 30%,  ρ = +30%)", (19.0, 26.5)),
 }
 
 

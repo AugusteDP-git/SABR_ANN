@@ -8,9 +8,8 @@ from src.data_vector_fd_beta import sample_domain_grid_and_random_fd_beta
 def main():
     cache_path = os.environ.get("PHASE2_FD_BETA_CACHE", "datasets/phase2_fd_beta_input.npz")
 
-    # You can adjust sizes here. FD is expensive; start modest and scale up.
-    n_train = int(os.environ.get("PHASE2_FD_BETA_NTRAIN", "20000"))
-    n_val   = int(os.environ.get("PHASE2_FD_BETA_NVAL",   "5000"))
+    n_train = int(os.environ.get("PHASE2_FD_BETA_NTRAIN", "100000"))
+    n_val   = int(os.environ.get("PHASE2_FD_BETA_NVAL",   "20000"))
 
     Xtr, Ytr, Xva, Yva, meta = sample_domain_grid_and_random_fd_beta(
         n_train=n_train,
