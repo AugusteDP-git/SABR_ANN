@@ -6,7 +6,7 @@ from src.data_vector_fd_beta import sample_domain_grid_and_random_fd_beta
 
 
 def main():
-    cache_path = os.environ.get("PHASE2_FD_BETA_CACHE", "datasets/phase2_fd_beta_input.npz")
+    cache_path = os.environ.get("PHASE2_FD_BETA_CACHE", "datasets/phase2_fd_beta_input_big.npz")
 
     n_train = int(os.environ.get("PHASE2_FD_BETA_NTRAIN", "100000"))
     n_val   = int(os.environ.get("PHASE2_FD_BETA_NVAL",   "20000"))

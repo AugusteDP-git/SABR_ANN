@@ -21,7 +21,7 @@ OUT_DIR = "night_runs/phase2_beta_input_run"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load the Phase-2 scalers
-with open(join(OUT_DIR, "scalers_vector.pkl"), "rb") as f:
+with open(join(OUT_DIR, "scalers_vector_big.pkl"), "rb") as f:
     scalers = pickle.load(f)
 
 # Same widths / regimes as training
@@ -30,7 +30,7 @@ REGIMES = ["short", "long"]
 
 for W in WIDTHS:
     for regime in REGIMES:
-        ckpt = join(OUT_DIR, f"w{W}_{regime}", f"best_w{W}.pt")
+        ckpt = join(OUT_DIR, f"w{W}_{regime}", f"best_big_w{W}.pt")
         if not isfile(ckpt):
             print(f"[Skip] checkpoint not found: {ckpt}")
             continue
@@ -44,11 +44,11 @@ for W in WIDTHS:
         if regime == "short":
             # Use original fig 3 scenario (T = 6M) – FD IV is true surface
             fig_id = 3
-            out_png = join(OUT_DIR, f"fig3_beta_surface_fdtrue_w{W}_short.png")
+            out_png = join(OUT_DIR, f"fig3_beta_surface_fdtrue_w{W}_short_big.png")
         else:
             # Use a long-tenor FIG scenario (e.g. fig 4) – FD IV is true surface
             fig_id = 4
-            out_png = join(OUT_DIR, f"fig4_beta_surface_fdtrue_w{W}_long.png")
+            out_png = join(OUT_DIR, f"fig4_beta_surface_fdtrue_w{W}_long_big.png")
 
         plot_3d_smile_beta_surface_fdtrue(
             fig_id=fig_id,

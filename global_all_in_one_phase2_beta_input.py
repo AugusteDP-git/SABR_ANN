@@ -31,7 +31,7 @@ torch.manual_seed(SEED); np.random.seed(SEED)
 # ----------------------- Paths & cache ---------------------
 INIT_FROM  = "night_runs/phase1_beta_input_run"     # Phase-1 β-input run
 OUT_DIR    = "night_runs/phase2_beta_input_run"     # Phase-2 output
-CACHE_PATH = os.environ.get("PHASE2_FD_BETA_CACHE", "datasets/phase2_fd_beta_input.npz")
+CACHE_PATH = os.environ.get("PHASE2_FD_BETA_CACHE", "datasets/phase2_fd_beta_input_big.npz")
 
 # ----------------------- Training knobs (Phase 2) ---------------------
 EPOCHS      = 2000
@@ -217,7 +217,7 @@ def main():
         "feature_order": ["T", "s0", "xi", "rho", "beta"] + [f"x{i+1}" for i in range(10)],
         "y_kind": "fd_beta_phase2",
     }
-    with open(join(OUT_DIR, "scalers_vector.pkl"), "wb") as f:
+    with open(join(OUT_DIR, "scalers_vector_big.pkl"), "wb") as f:
         pickle.dump(scalers, f)
 
     # --- Standardize ---
@@ -275,13 +275,9 @@ def main():
             )
             ckdir = join(OUT_DIR, f"w{W}_{regime}")
             os.makedirs(ckdir, exist_ok=True)
-            torch.save(m.state_dict(), join(ckdir, f"best_w{W}.pt"))
+            torch.save(m.state_dict(), join(ckdir, f"best_big_w{W}.pt"))
             print(f"[Save] → {ckdir}/best_w{W}.pt")
 
-    # --- Optional: 3D surfaces for diagnostics (using Phase-2 nets) ---
-    print("\n[Plot] Generating 3D β surfaces for W=1000 if checkpoints exist…")
-    with open(join(OUT_DIR, "scalers_vector.pkl"), "rb") as f:
-        scalers_for_plot = pickle.load(f)
 
     print("\n[All done] Phase-2 β-FD training complete.")
 
