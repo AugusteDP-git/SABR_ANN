@@ -101,7 +101,6 @@ def _apply_A_F(
     out = np.zeros((NX, NY))
     for j in range(NY):
         sigma = sigma_grid[j]
-        # 0.5 * σ^2 * F^{2β}
         aF = 0.5 * sigma * sigma * (F_grid ** (2.0 * beta))
         for i in range(1, NX - 1):
             out[i, j] = aF[i] * (V[i + 1, j] - 2.0 * V[i, j] + V[i - 1, j]) / (dF * dF)
@@ -182,14 +181,15 @@ def _price_call_sabr_adi_beta_core(
     NT,
 ):
     """
-    Numba-jitted ADI core. Returns just the price at (F0, sigma0).
-    All args are plain floats / ints. No printing, no tqdm here.
+    Numba-jitted ADI core (Craig–Sneyd-type scheme with θ = 0.5).
+    Returns just the price at (F0, sigma0).
     """
     F_grid = np.linspace(F_min, F_max, NX)
     sigma_grid = np.linspace(S_min, S_max, NY)
     dF = F_grid[1] - F_grid[0]
     dS = sigma_grid[1] - sigma_grid[0]
     dt = T / NT
+    theta = 0.5
 
     # Terminal payoff: max(F-K, 0) for all sigma
     V = np.zeros((NX, NY))
@@ -204,46 +204,49 @@ def _price_call_sabr_adi_beta_core(
     B_V = np.zeros((NX, NY))
     C_V = np.zeros((NX, NY))
 
+    aF_line = np.zeros(NX)
+    aS_line = np.zeros(NY)
+
     for _ in range(NT):
         # Enforce F-boundaries
         for j in range(NY):
             V[0, j] = 0.0
             V[NX - 1, j] = F_grid[NX - 1] - K
-
         # Neumann(0) in sigma via reflection
         for i in range(NX):
             V[i, 0] = V[i, 1]
             V[i, NY - 1] = V[i, NY - 2]
 
-        # Operators
+        # Operators at V^n
         A_V[:, :] = _apply_A_F(V, F_grid, sigma_grid, beta, dF)
         B_V[:, :] = _apply_B_sigma(V, sigma_grid, nu, dS)
         C_V[:, :] = _apply_C_mixed(V, F_grid, sigma_grid, beta, nu, rho, dF, dS)
 
-        # Douglas ADI:
+        # ---------------- Craig–Sneyd scheme ----------------
 
-        # 1) Explicit mixed term
-        Y0 = V + dt * C_V
+        # (0) Explicit predictor with all terms
+        Y0 = V + dt * (A_V + B_V + C_V)
 
-        # 2) Implicit in F for each j
+        # (1) F-sweep: (I - θ dt A) Y1 = Y0 - θ dt A(V^n)
         Y1 = np.empty((NX, NY))
         for j in range(NY):
             sigma = sigma_grid[j]
-            aF = 0.5 * sigma * sigma * (F_grid ** (2.0 * beta))
-
+            # aF for this sigma-line
+            for i in range(NX):
+                aF_line[i] = 0.5 * sigma * sigma * (F_grid[i] ** (2.0 * beta))
             a = np.zeros(NX)
             b = np.zeros(NX)
             c = np.zeros(NX)
             d = np.zeros(NX)
 
-            coef = dt * aF / (dF * dF)
             for i in range(1, NX - 1):
-                a[i] = -coef[i]
-                b[i] = 1.0 + 2.0 * coef[i]
-                c[i] = -coef[i]
-                d[i] = Y0[i, j] + dt * A_V[i, j]
+                coef = theta * dt * aF_line[i] / (dF * dF)
+                a[i] = -coef
+                b[i] = 1.0 + 2.0 * coef
+                c[i] = -coef
+                d[i] = Y0[i, j] - theta * dt * A_V[i, j]
 
-            # F-boundaries: Dirichlet
+            # Dirichlet F-boundaries
             a[0] = 0.0
             b[0] = 1.0
             c[0] = 0.0
@@ -256,24 +259,23 @@ def _price_call_sabr_adi_beta_core(
 
             Y1[:, j] = _thomas_tridiag(a, b, c, d)
 
-        # 3) Implicit in sigma for each i
-        V_new = np.empty((NX, NY))
-        aS = 0.5 * (nu * nu) * (sigma_grid * sigma_grid)
-        coef_s = dt * aS / (dS * dS)
-
+        # (2) σ-sweep: (I - θ dt B) U2 = Y1 - θ dt B(V^n)
+        U2 = np.empty((NX, NY))
+        for j in range(NY):
+            aS_line[j] = 0.5 * (nu * nu) * (sigma_grid[j] * sigma_grid[j])
         for i in range(NX):
             a = np.zeros(NY)
             b = np.zeros(NY)
             c = np.zeros(NY)
             d = np.zeros(NY)
-
             for j in range(1, NY - 1):
-                a[j] = -coef_s[j]
-                b[j] = 1.0 + 2.0 * coef_s[j]
-                c[j] = -coef_s[j]
-                d[j] = Y1[i, j] + dt * B_V[i, j]
+                coef_s = theta * dt * aS_line[j] / (dS * dS)
+                a[j] = -coef_s
+                b[j] = 1.0 + 2.0 * coef_s
+                c[j] = -coef_s
+                d[j] = Y1[i, j] - theta * dt * B_V[i, j]
 
-            # sigma boundaries: identity (we'll reflect after)
+            # σ-boundaries treated as identity; reflection reapplied next step
             a[0] = 0.0
             b[0] = 1.0
             c[0] = 0.0
@@ -283,6 +285,67 @@ def _price_call_sabr_adi_beta_core(
             b[NY - 1] = 1.0
             c[NY - 1] = 0.0
             d[NY - 1] = Y1[i, NY - 1]
+
+            U2[i, :] = _thomas_tridiag(a, b, c, d)
+
+        # (3) Mixed-term correction: C at U2 vs at V^n
+        C_U2 = _apply_C_mixed(U2, F_grid, sigma_grid, beta, nu, rho, dF, dS)
+        U3 = U2 + 0.5 * dt * (C_U2 - C_V)
+
+        # (4) Second F-sweep: (I - θ dt A) U4 = U3 - θ dt A(V^n)
+        U4 = np.empty((NX, NY))
+        for j in range(NY):
+            sigma = sigma_grid[j]
+            for i in range(NX):
+                aF_line[i] = 0.5 * sigma * sigma * (F_grid[i] ** (2.0 * beta))
+            a = np.zeros(NX)
+            b = np.zeros(NX)
+            c = np.zeros(NX)
+            d = np.zeros(NX)
+
+            for i in range(1, NX - 1):
+                coef = theta * dt * aF_line[i] / (dF * dF)
+                a[i] = -coef
+                b[i] = 1.0 + 2.0 * coef
+                c[i] = -coef
+                d[i] = U3[i, j] - theta * dt * A_V[i, j]
+
+            a[0] = 0.0
+            b[0] = 1.0
+            c[0] = 0.0
+            d[0] = 0.0
+
+            a[NX - 1] = 0.0
+            b[NX - 1] = 1.0
+            c[NX - 1] = 0.0
+            d[NX - 1] = F_grid[NX - 1] - K
+
+            U4[:, j] = _thomas_tridiag(a, b, c, d)
+
+        # (5) Second σ-sweep: (I - θ dt B) V^{n+1} = U4 - θ dt B(V^n)
+        V_new = np.empty((NX, NY))
+        for i in range(NX):
+            a = np.zeros(NY)
+            b = np.zeros(NY)
+            c = np.zeros(NY)
+            d = np.zeros(NY)
+
+            for j in range(1, NY - 1):
+                coef_s = theta * dt * aS_line[j] / (dS * dS)
+                a[j] = -coef_s
+                b[j] = 1.0 + 2.0 * coef_s
+                c[j] = -coef_s
+                d[j] = U4[i, j] - theta * dt * B_V[i, j]
+
+            a[0] = 0.0
+            b[0] = 1.0
+            c[0] = 0.0
+            d[0] = U4[i, 0]
+
+            a[NY - 1] = 0.0
+            b[NY - 1] = 1.0
+            c[NY - 1] = 0.0
+            d[NY - 1] = U4[i, NY - 1]
 
             V_new[i, :] = _thomas_tridiag(a, b, c, d)
 
@@ -354,8 +417,7 @@ def price_call_sabr_adi_beta(
         B(V) = 0.5 ν^2 σ^2 V_σσ
         C(V) = ρ ν σ^2 F^β V_{Fσ}.
 
-    This is a thin Python wrapper around the Numba-jitted core.
-    Returns (price, implied_vol).
+    Returns (price, Black_implied_vol).
     """
     F0 = float(F0)
     sigma0 = float(sigma0)
@@ -374,12 +436,10 @@ def price_call_sabr_adi_beta(
     nu = max(nu, 1e-4)
     rho = float(np.clip(rho, -0.999, 0.999))
 
-    # Grid bounds (same logic as before)
     if F_min is None:
         F_min = max(1e-4 * F0, 1e-4 * K, 0.01)
     if F_max is None:
         F_max = max(4.0 * F0, 4.0 * K, F0 * 5.0)
-
     if S_min is None:
         S_min = max(0.1 * sigma0, 1e-3)
     if S_max is None:
