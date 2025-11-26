@@ -1,0 +1,38 @@
+{
+  "widths": [
+    250,
+    500,
+    750,
+    1000
+  ],
+  "width_cfg": {
+    "250": {
+      "init_lr": 0.003,
+      "gamma": 0.9985,
+      "patience": 8,
+      "tol": 0.0005
+    },
+    "500": {
+      "init_lr": 0.003,
+      "gamma": 0.9981,
+      "patience": 12,
+      "tol": 0.0004
+    },
+    "750": {
+      "init_lr": 0.003,
+      "gamma": 0.9983,
+      "patience": 16,
+      "tol": 0.0003
+    },
+    "1000": {
+      "init_lr": 0.003,
+      "gamma": 0.9986,
+      "patience": 20,
+      "tol": 0.0002
+    }
+  },
+  "epochs": 2,
+  "batch": 512,
+  "seed": 123,
+  "device": "mps"
+}
