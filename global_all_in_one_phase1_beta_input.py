@@ -14,7 +14,7 @@ from src.data_vector_with_beta import sample_domain_grid_and_random_with_beta
 from src.nn_arch import GlobalSmileNetVector
 from src.lr_schedules import PaperStyleLR
 
-# ---------------------------- Device & seeds ----------------------------
+
 SEED = 123
 _FORCED_DEVICE = os.getenv("GLOBAL_DEVICE", "").strip().lower()
 if _FORCED_DEVICE:
@@ -27,24 +27,24 @@ else:
     )
 torch.manual_seed(SEED); np.random.seed(SEED)
 
-# ----------------------- Global training knobs (P1, multi-β) ------------
+
 
 OUT_DIR      = "night_runs/phase1_beta_input_run"
-EPOCHS       = 2000          # same as your original phase1
+EPOCHS       = 2000          
 BATCH        = 512
 MIN_LR       = 1e-8
-BUMP         = 1.008           # gentle nudge
-CUTOFF_FRAC  = 0.85            # last ~15% uses tail decay
-AFTER_GAMMA  = 0.9992          # slightly gentler tail
-BUMP_HOLD    = 1               # let bumps act
-MAX_BUMPS    = 1               # conservative number of bumps
-EMA_BETA     = 0.999           # smooth val for scheduler
-T_COL        = 0               # T is still the first feature
-SHORT_BOUND  = 1.0             # T <= 1Y → "short", T > 1Y → "long"
+BUMP         = 1.008           
+CUTOFF_FRAC  = 0.85            
+AFTER_GAMMA  = 0.9992          
+BUMP_HOLD    = 1               
+MAX_BUMPS    = 1               
+EMA_BETA     = 0.999           
+T_COL        = 0              
+SHORT_BOUND  = 1.0             
 
-# ----------------------- Per-width overrides (same style) ---------------
+
 PER_WIDTH = {
-    #   W   :              init_lr,  gamma,   patience,  tol
+
     250: dict(init_lr=3.0e-3, gamma=0.9990, patience= 8, tol=5e-4),
     500: dict(init_lr=3.0e-3, gamma=0.9990, patience= 8, tol=5e-4),
     750: dict(init_lr=3.0e-3, gamma=0.9990, patience= 8, tol=5e-4),
@@ -52,18 +52,14 @@ PER_WIDTH = {
 }
 WIDTHS = [250, 500, 750, 1000]
 
-# ----------------------------- Utilities --------------------------------
+
 def _assert_finite(name, t: torch.Tensor):
     if not torch.isfinite(t).all():
         bad = (~torch.isfinite(t)).nonzero(as_tuple=False)[:5].tolist()
         raise ValueError(f"[{name}] non-finite values at indices {bad}")
 
 def split_by_maturity(X: np.ndarray, Y: np.ndarray, *, tcol: int = T_COL, boundary: float = SHORT_BOUND):
-    """
-    Paper convention: short if T <= 1Y, long if T > 1Y.
-    Assumes T is at column tcol in the *unstandardized* feature space;
-    here we use the standardized version but T-col ordering is preserved.
-    """
+  
     T = X[:, tcol].astype(float)
     short = T <= boundary
     long  = T >  boundary
@@ -94,7 +90,6 @@ def train_one_width(hidden,
     dl_tr = torch.utils.data.DataLoader(tr, batch_size=batch, shuffle=True)
     dl_va = torch.utils.data.DataLoader(va, batch_size=batch, shuffle=False)
 
-    # in_dim=15: [T, s0, xi, rho, beta, x1..x10]
     model = GlobalSmileNetVector(in_dim=15, hidden=hidden, out_dim=10).to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=init_lr)
     sched = PaperStyleLR(
@@ -155,7 +150,6 @@ def train_one_width(hidden,
 
         sched.step(va_loss)
 
-        # verbose logging (same style as your existing scripts)
         print(f"  ep {ep:4d}/{epochs} | tr={tr_loss:.3e} | va={va_loss:.3e} | lr={opt.param_groups[0]['lr']:.2e}")
 
         if va_loss < best - 1e-9:
@@ -170,27 +164,23 @@ def train_one_width(hidden,
     print(f"[Train] done in {dt:.1f}s | best val={best:.3e}")
     return model
 
-# -------------------------------- Main ----------------------------------
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     print(f"[Device] {DEVICE.type}")
     print("[Phase-1 multi-β] Building dataset…")
 
-    # Data + scalers (Hagan labels across β, with β as an input)
     Xtr_raw, Ytr_raw, Xva_raw, Yva_raw, scalers = sample_domain_grid_and_random_with_beta()
     with open(join(OUT_DIR, "scalers_vector.pkl"), "wb") as f:
         pickle.dump(scalers, f)
     print(f"[Data] train={Xtr_raw.shape}, val={Xva_raw.shape}")
     print(f"[Data] feature_order={scalers.get('feature_order')}")
 
-    # Split by maturity (short vs long) using standardized T column
     (Xtr_s, Ytr_s), (Xtr_l, Ytr_l) = split_by_maturity(Xtr_raw, Ytr_raw)
     (Xva_s, Yva_s), (Xva_l, Yva_l) = split_by_maturity(Xva_raw, Yva_raw)
 
     print(f"[Split] short train={Xtr_s.shape}, long train={Xtr_l.shape}")
     print(f"[Split] short val={Xva_s.shape}, long val={Xva_l.shape}")
 
-    # Train each width, short & long, with per-width overrides
     for W in WIDTHS:
         cfg = PER_WIDTH[W]
         hidden = (W,)

@@ -15,14 +15,12 @@ from src.nn_arch import GlobalSmileNetVector
 from src.lr_schedules import PaperStyleLR
 from src.plotting_vector import plot_fig
 
-# ---------------------------- Device & seeds ----------------------------
 SEED = 123
 _FORCED_DEVICE = os.getenv("GLOBAL_DEVICE", "").strip().lower()
 DEVICE = torch.device(_FORCED_DEVICE if _FORCED_DEVICE
                       else ("mps" if torch.backends.mps.is_available() else "cpu"))
 torch.manual_seed(SEED); np.random.seed(SEED)
 
-# ----------------------- Global training knobs --------------------------
 OUT_DIR      = "night_runs/phase1_width_sweep"
 EPOCHS       = 2_000
 BATCH        = 512
@@ -36,15 +34,13 @@ EMA_BETA     = 0.999
 T_COL        = 0
 SHORT_BOUND  = 1.0
 
-# ----------------------- Width groups (for plotting) --------------------
 WIDTHS_GROUPS = {
     "small_mid": [16, 32, 64, 128, 256],
     "mid_large": [256, 500, 1000, 2000, 3000],
 }
-# Train the union once, then plot per-group
 ALL_WIDTHS = sorted(set(sum(WIDTHS_GROUPS.values(), [])))
 
-# ----------------------- Per-width scheduler knobs ----------------------
+
 def cfg_for_width(W: int):
     """
     LR scheduler heuristics for 2k epochs.
@@ -63,7 +59,7 @@ def cfg_for_width(W: int):
     # W >= 3000
     return dict(init_lr=1.6e-3, gamma=0.9989, patience=11, tol=4e-4)
 
-# ----------------------------- Utilities --------------------------------
+
 def _assert_finite(name, t: torch.Tensor):
     if not torch.isfinite(t).all():
         bad = (~torch.isfinite(t)).nonzero(as_tuple=False)[:5].tolist()
@@ -114,7 +110,7 @@ def train_one_width(hidden, Xtr, Ytr, Xva, Yva, *, epochs, batch,
         va_loss = va_sum / max(1, n)
         sched.step(va_loss)
 
-        # print each epoch (keeps your usual verbosity)
+
         print(f"  ep {ep:4d}/{epochs} | tr={tr_loss:.3e} | va={va_loss:.3e} | lr={opt.param_groups[0]['lr']:.2e}")
         if va_loss < best - 1e-9:
             best = va_loss
@@ -125,21 +121,21 @@ def train_one_width(hidden, Xtr, Ytr, Xva, Yva, *, epochs, batch,
     print(f"[Train] done in {time.time()-t0:.1f}s | best val={best:.3e}")
     return model
 
-# -------------------------------- Main ----------------------------------
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     print(f"[Device] {DEVICE.type}")
 
-    # Data + scalers
+
     Xtr_raw, Ytr_raw, Xva_raw, Yva_raw, scalers = sample_domain_grid_and_random()
     with open(join(OUT_DIR, "scalers_vector.pkl"), "wb") as f:
         pickle.dump(scalers, f)
 
-    # Split by tenor (short/long)
+
     (Xtr_s, Ytr_s), (Xtr_l, Ytr_l) = split_by_maturity(Xtr_raw, Ytr_raw)
     (Xva_s, Yva_s), (Xva_l, Yva_l) = split_by_maturity(Xva_raw, Yva_raw)
 
-    # ---------------- Train once over the union of widths ----------------
+
     for W in ALL_WIDTHS:
         cfg = cfg_for_width(W)
         hidden = (W,)
@@ -163,7 +159,7 @@ def main():
             torch.save(m.state_dict(), join(ckdir, f"best_w{W}.pt"))
             print(f"[Save] → {ckdir}/best_w{W}.pt")
 
-    # ---------------- Build model buckets per regime ---------------------
+
     with open(join(OUT_DIR, "scalers_vector.pkl"), "rb") as f:
         scalers_for_plot = pickle.load(f)
 
@@ -176,17 +172,17 @@ def main():
                 state = torch.load(ckpt, map_location=DEVICE)
                 m.load_state_dict(state, strict=False)
                 m.eval()
-                ckpt_map[regime][W] = ((W,), m)   # store tuple used by plot_fig
+                ckpt_map[regime][W] = ((W,), m)   
             else:
                 print(f"[Plot] missing checkpoint: {ckpt}")
 
-    # ---------------- Plot two figures for each scenario -----------------
+
     for fig_id in (2, 3, 4):
         T = float(FIG[fig_id][0])
         regime = "short" if (T <= SHORT_BOUND) else "long"
 
         for group_name, group_widths in WIDTHS_GROUPS.items():
-            # Build the model list in the plotting order
+
             selected = []
             for W in group_widths:
                 item = ckpt_map[regime].get(W, None)

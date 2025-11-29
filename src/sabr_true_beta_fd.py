@@ -23,36 +23,11 @@ def sabr_true_iv_beta_fd(
     NY: int = 61,
     NT: int = 800,
 ) -> np.ndarray:
-    """
-    Vectorised wrapper around price_call_sabr_adi_beta to get implied vols.
-
-    Parameters
-    ----------
-    F, K : float or array-like
-        Forward and strikes (broadcasted).
-    T : float
-        Maturity in years.
-    alpha : float
-        Initial vol σ0.
-    beta : float or array-like
-        SABR β parameter in [0,1].
-    rho : float
-        Correlation in [-1,1].
-    nu : float
-        Vol-of-vol.
-    NX, NY, NT : int
-        FD grid sizes.
-
-    Returns
-    -------
-    np.ndarray
-        Implied vols with the broadcasted shape of np.broadcast(F, K, beta).
-    """
+   
     F_arr = np.asarray(F, dtype=float)
     K_arr = np.asarray(K, dtype=float)
     beta_arr = np.asarray(beta, dtype=float)
 
-    # Broadcast to common shape
     F_b, K_b, beta_b = np.broadcast_arrays(F_arr, K_arr, beta_arr)
     out_shape = F_b.shape
     vols = np.empty(out_shape, dtype=float)
