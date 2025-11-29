@@ -12,10 +12,9 @@ class GlobalSmileNetVector(nn.Module):
         self.act  = nn.Softplus()
         self.head = nn.Linear(h, out_dim)
 
-        # Initialization consistent with Softplus
-        nn.init.xavier_uniform_(self.fc1.weight)   # better for Softplus than Kaiming-ReLU
+        nn.init.xavier_uniform_(self.fc1.weight)   
         nn.init.zeros_(self.fc1.bias)
-        nn.init.zeros_(self.head.weight)           # start near mean (since targets are standardized)
+        nn.init.zeros_(self.head.weight)           
         nn.init.zeros_(self.head.bias)
 
     def forward(self, x):

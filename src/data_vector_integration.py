@@ -5,21 +5,17 @@ from typing import Tuple, Dict, Any
 import numpy as np
 
 from MaxK_minK import strike_ratio, ETA_S_MIN, ETA_S_MAX, ETA_SIGMA
-from sabr_integrationF import sabr_implied_vol  # integration-based SABR vols
+from sabr_integrationF import sabr_implied_vol  
 
 F0 = 1.0
-BETA = 1.0  # here we only treat the lognormal case; for β<1, use a parallel module
+BETA = 1.0 
 
-# Same domain structure as Phase-2 / paper (you can tighten these if needed)
-T_MIN, T_MAX        = 1.0 / 365.0, 2.0     # 1 day to 2 years
-SIG0_MIN, SIG0_MAX  = 0.05, 0.50           # 5% to 50%
-XI_MIN, XI_MAX      = 0.05, 4.00           # vol-of-vol range (ν)
-RHO_MIN, RHO_MAX    = -0.90, 0.90          # correlation
+T_MIN, T_MAX        = 1.0 / 365.0, 2.0     
+SIG0_MIN, SIG0_MAX  = 0.05, 0.50           
+XI_MIN, XI_MAX      = 0.05, 4.00           
+RHO_MIN, RHO_MAX    = -0.90, 0.90          
 
 
-# -------------------------------------------------------------------
-# Strike grid construction
-# -------------------------------------------------------------------
 def _build_strikes(F0: float, sigma0: float, rho: float, xi: float, T: float) -> np.ndarray:
     """
     Build the 10-node strike grid using the same MaxK_minK logic
@@ -32,9 +28,6 @@ def _build_strikes(F0: float, sigma0: float, rho: float, xi: float, T: float) ->
     return np.exp(grid)
 
 
-# -------------------------------------------------------------------
-# Single-sample construction
-# -------------------------------------------------------------------
 def _one_sample(F0: float, T: float, sigma0: float, rho: float, xi: float):
     """
     Build a single (X, Y) sample:
@@ -69,15 +62,8 @@ def _one_sample(F0: float, T: float, sigma0: float, rho: float, xi: float):
     return feats, vols
 
 
-# -------------------------------------------------------------------
-# Dataset sampling
-# -------------------------------------------------------------------
 def _sample_dataset(n_samples: int, seed: int = 1234) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Randomly sample (T, sigma0, xi, rho) over the Phase-2 domain
-    and build a dataset of size n_samples.
-    Resamples on failure (non-finite vols).
-    """
+   
     rng = np.random.default_rng(seed)
     X_list, Y_list = [], []
 
@@ -102,22 +88,12 @@ def _sample_dataset(n_samples: int, seed: int = 1234) -> Tuple[np.ndarray, np.nd
     return X_arr, Y_arr
 
 
-# -------------------------------------------------------------------
-# Public API: build & cache Phase-2 integration dataset
-# -------------------------------------------------------------------
 def sample_domain_grid_and_random(
     n_train: int = 150_000,
     n_val: int = 50_000,
     cache_path: str | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
-    """
-    Build the Phase-2 integration-based dataset and cache it.
-
-    Signature and returned objects are compatible with data_vector_true.sample_domain_grid_and_random
-    as used in global_all_in_one_step2_integration.py.
-
-    The environment variable PHASE2_CACHE (if present) overrides `cache_path`.
-    """
+    
     if cache_path is None:
         cache_path = os.environ.get(
             "PHASE2_CACHE",
@@ -126,7 +102,6 @@ def sample_domain_grid_and_random(
 
     preset = os.environ.get("PHASE2_PRESET", "paper").lower()
     if preset == "paper":
-        # Use the paper-like sizes unless overridden explicitly
         n_train_use = n_train
         n_val_use = n_val
     else:
@@ -138,7 +113,6 @@ def sample_domain_grid_and_random(
         f"n_train={n_train_use}, n_val={n_val_use}, cache='{cache_path}'"
     )
 
-    # Training and validation sets
     X_tr, Y_tr = _sample_dataset(n_train_use, seed=1234)
     X_val, Y_val = _sample_dataset(n_val_use, seed=5678)
 
@@ -168,16 +142,7 @@ def sample_domain_grid_and_random(
     return X_tr, Y_tr, X_val, Y_val, meta
 
 
-# -------------------------------------------------------------------
-# Public API: load cached Phase-2 integration dataset
-# -------------------------------------------------------------------
 def load_phase2_cached(path: str):
-    """
-    Load the cached Phase-2 integration-based dataset.
-
-    Returns:
-        (Xtr, Ytr, Xva, Yva, meta_dict) or None if the file does not exist.
-    """
     if not os.path.isfile(path):
         return None
     data = np.load(path, allow_pickle=True)

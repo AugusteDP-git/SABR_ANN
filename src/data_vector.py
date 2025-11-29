@@ -9,21 +9,21 @@ from src.sabr_hagan import sabr_implied_vol
 SEED = 123
 np.random.seed(SEED); random.seed(SEED)
 
-# sabr constants used across modules
+
 F0, BETA = 1.0, 1.0
-# strike construction constants (paper §4)
+
 ETA_SIGMA = 1.5
 ETA_S_MIN, ETA_S_MAX = -3.5, +3.5
 
-# domains (paper)
+
 T_MIN, T_MAX = 1.0/365.0, 2.0
 SIG0_MIN, SIG0_MAX = 0.05, 0.50
 RHO_MIN,  RHO_MAX  = -0.90, +0.90
-# ξ term structure heuristic, anchored at 1M
+
 TS = 1.0/12.0
 XI_1M_MIN, XI_1M_MAX = 0.05, 4.00
 
-# figure presets for convenience
+
 FIG = {
     2: (14.0/365.0, 0.30, 1.60, -0.60, "(T = 14D, σ₀ = 30%, ξ = 160%, ρ = −60%)", (25.0, 45.5)),
     3: (6.0/12.0,   0.30, 0.40,  0.00, "(T = 6M,  σ₀ = 30%, ξ = 40%,  ρ = 0%)",    (30.0, 34.5)),
@@ -33,20 +33,20 @@ FIG = {
 from .sabr_hagan import sabr_implied_vol
 
 def _safe_vols(F0, K, T, s0, rho, xi, max_shrink=4):
-    """Try to get finite vols; if not, shrink strike box progressively."""
+
     scale = 1.0
     for _ in range(max_shrink):
         vols = sabr_implied_vol(F0, K, T, s0, 1.0, rho, xi).astype(np.float32)
         if np.isfinite(vols).all():
             return vols
-        # shrink strikes toward ATM and retry
+
         scale *= 0.8
         logK = np.log(K / F0)
         K = F0 * np.exp(scale * logK)
-    return None  # signal failure
+    return None
 
 def _one_sample(F0, T, s0, rho, xi):
-    """Build one clean (X, Y) pair or return None if unstable."""
+
     xln, K = ten_strikes(F0, s0, rho, xi, T)
     vols = _safe_vols(F0, K, T, s0, rho, xi)
     if vols is None:
@@ -63,17 +63,13 @@ def xi_bounds_for_T(T: float) -> Tuple[float, float]:
 def _strike_limits_exact(F0, s0, rho, xi, T):
     K_min = F0 * strike_ratio(F0, s0, rho, xi, T, ETA_S_MIN, ETA_SIGMA)
     K_max = F0 * strike_ratio(F0, s0, rho, xi, T, ETA_S_MAX, ETA_SIGMA)
-    # ensure sensible ordering and non-degeneracy
     klo, khi = (min(K_min, K_max), max(K_min, K_max))
-    # clip to avoid absurd extremes that break Hagan
     klo = max(klo, F0 * 1e-6)
     khi = min(khi, F0 * 1e+6)
     return klo, khi
     
 def ten_strikes(F: float, s0: float, rho: float, xi: float, T: float):
-    # try the paper range; if it later yields non-finite vols, we’ll shrink in caller
     kmin, kmax = _strike_limits_exact(F, s0, rho, xi, T)
-    # if collapsed (rare), nudge
     if not np.isfinite(kmin) or not np.isfinite(kmax) or (kmax <= kmin):
         kmin, kmax = F * 0.7, F * 1.4
     xgrid = np.linspace(np.log(kmin / F), np.log(kmax / F), 10).astype(np.float32)
@@ -83,9 +79,7 @@ def ten_strikes(F: float, s0: float, rho: float, xi: float, T: float):
 def sample_domain_grid_and_random(
     n_random_train: int = 150_000, n_val: int = 50_000
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict]:
-    from .sabr_hagan import sabr_implied_vol
 
-    # deterministic 100k grid
     T_grid = np.linspace(T_MIN, T_MAX, 100)
     s0_g   = np.linspace(SIG0_MIN, SIG0_MAX, 10)
     rho_g  = np.linspace(RHO_MIN, RHO_MAX, 10)
@@ -104,7 +98,6 @@ def sample_domain_grid_and_random(
                     Xg.append(feats); Yg.append(vols)
     Xg = np.stack(Xg); Yg = np.stack(Yg)
 
-    # random 150k train + 50k val
     def rnd(n):
         Xr, Yr = [], []
         for _ in range(n):
@@ -134,22 +127,15 @@ def sample_domain_grid_and_random(
               "y_kind":"hagan"} )
 
 
-# create_dataset_paper.py
-# Build the global dataset used by global_nn.py (scalar target).
-# Returns standardized features/targets and scalers + feature_order.
 
 F0, BETA = 1.0, 1.0
 
-# Paper ranges (section 4.1)
 T_MIN, T_MAX = 1.0 / 365.0, 2.0
 S0_MIN, S0_MAX = 0.05, 0.50
 RHO_MIN, RHO_MAX = -0.90, +0.90
 
 def sample_xi(T: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """
-    Vol-of-vol heuristic with mild tenor decay.
-    Draw base ~ U[0.10, 1.00], then scale by 1/sqrt(T), clip to [0.05, 2.50].
-    """
+
     base = rng.uniform(0.10, 1.00, size=T.shape[0])
     decay = 1.0 / np.sqrt(np.maximum(T, 1e-6))
     xi = np.clip(base * decay, 0.05, 2.50)
@@ -177,11 +163,9 @@ def make_train_val(n_train: int = 250_000, n_val: int = 50_000, *, seed: int = 1
         x  = np.log(np.maximum(kf, 1e-12)).astype(np.float32)  # small safety max
         return x, T, s0, xi, rho
 
-    # target sample count
     target_total = int(n_train + n_val)
     X_parts, y_parts = [], []
 
-    # deterministic chunk (≈100k cap)
     n_det_target = min(100_000, target_total)
     cnt = 0
     T_det   = np.linspace(T_MIN, T_MAX, 100, dtype=np.float32)
@@ -217,7 +201,6 @@ def make_train_val(n_train: int = 250_000, n_val: int = 50_000, *, seed: int = 1
             if cnt >= n_det_target: break
         if cnt >= n_det_target: break
 
-    # random chunks to reach target_total
     current = cnt
     while current < target_total:
         n_need = min(100_000, target_total - current)
@@ -233,13 +216,11 @@ def make_train_val(n_train: int = 250_000, n_val: int = 50_000, *, seed: int = 1
     X = np.concatenate(X_parts, axis=0).astype(np.float32)
     y = np.concatenate(y_parts, axis=0).astype(np.float32)
 
-    # shuffle & split
     idx = rng.permutation(X.shape[0])
     X, y = X[idx], y[idx]
     X_tr, y_tr = X[:n_train], y[:n_train]
     X_va, y_va = X[n_train:n_train + n_val], y[n_train:n_train + n_val]
 
-    # standardize (use train stats)
     feature_order = ["x", "T", "s0", "xi", "rho"]
     x_mu = X_tr.mean(axis=0).astype(np.float32)
     x_sd = (X_tr.std(axis=0).astype(np.float32) + 1e-8)

@@ -5,9 +5,6 @@ from typing import Tuple
 from scipy.stats import norm
 from numba import njit
 
-# ------------------------ Black helpers (for IV back-out) ------------------------
-
-
 def _black_call_forward(F: float, K: float, T: float, vol: float) -> float:
     """Undiscounted Black (1976) call with forward F."""
     F = float(F)
@@ -59,7 +56,6 @@ def black_implied_vol(
     return float(0.5 * (a + b))
 
 
-# ----------------------------- Tridiagonal solver -------------------------------
 
 
 @njit(cache=True, fastmath=True)
@@ -82,7 +78,6 @@ def _thomas_tridiag(a, b, c, d):
     return x
 
 
-# ----------------------------- Operators A, B, C --------------------------------
 
 
 @njit(cache=True, fastmath=True)
@@ -160,7 +155,6 @@ def _apply_C_mixed(
     return out
 
 
-# ----------------------------- JITted ADI core ----------------------------------
 
 
 @njit(cache=True, fastmath=True)
@@ -180,10 +174,7 @@ def _price_call_sabr_adi_beta_core(
     NY,
     NT,
 ):
-    """
-    Numba-jitted ADI core (Craig–Sneyd-type scheme with θ = 0.5).
-    Returns just the price at (F0, sigma0).
-    """
+
     F_grid = np.linspace(F_min, F_max, NX)
     sigma_grid = np.linspace(S_min, S_max, NY)
     dF = F_grid[1] - F_grid[0]
@@ -191,7 +182,6 @@ def _price_call_sabr_adi_beta_core(
     dt = T / NT
     theta = 0.5
 
-    # Terminal payoff: max(F-K, 0) for all sigma
     V = np.zeros((NX, NY))
     for i in range(NX):
         payoff = F_grid[i] - K
@@ -208,26 +198,21 @@ def _price_call_sabr_adi_beta_core(
     aS_line = np.zeros(NY)
 
     for _ in range(NT):
-        # Enforce F-boundaries
         for j in range(NY):
             V[0, j] = 0.0
             V[NX - 1, j] = F_grid[NX - 1] - K
-        # Neumann(0) in sigma via reflection
         for i in range(NX):
             V[i, 0] = V[i, 1]
             V[i, NY - 1] = V[i, NY - 2]
 
-        # Operators at V^n
         A_V[:, :] = _apply_A_F(V, F_grid, sigma_grid, beta, dF)
         B_V[:, :] = _apply_B_sigma(V, sigma_grid, nu, dS)
         C_V[:, :] = _apply_C_mixed(V, F_grid, sigma_grid, beta, nu, rho, dF, dS)
 
         # ---------------- Craig–Sneyd scheme ----------------
 
-        # (0) Explicit predictor with all terms
         Y0 = V + dt * (A_V + B_V + C_V)
 
-        # (1) F-sweep: (I - θ dt A) Y1 = Y0 - θ dt A(V^n)
         Y1 = np.empty((NX, NY))
         for j in range(NY):
             sigma = sigma_grid[j]
@@ -259,7 +244,6 @@ def _price_call_sabr_adi_beta_core(
 
             Y1[:, j] = _thomas_tridiag(a, b, c, d)
 
-        # (2) σ-sweep: (I - θ dt B) U2 = Y1 - θ dt B(V^n)
         U2 = np.empty((NX, NY))
         for j in range(NY):
             aS_line[j] = 0.5 * (nu * nu) * (sigma_grid[j] * sigma_grid[j])
@@ -275,7 +259,6 @@ def _price_call_sabr_adi_beta_core(
                 c[j] = -coef_s
                 d[j] = Y1[i, j] - theta * dt * B_V[i, j]
 
-            # σ-boundaries treated as identity; reflection reapplied next step
             a[0] = 0.0
             b[0] = 1.0
             c[0] = 0.0
@@ -288,11 +271,9 @@ def _price_call_sabr_adi_beta_core(
 
             U2[i, :] = _thomas_tridiag(a, b, c, d)
 
-        # (3) Mixed-term correction: C at U2 vs at V^n
         C_U2 = _apply_C_mixed(U2, F_grid, sigma_grid, beta, nu, rho, dF, dS)
         U3 = U2 + 0.5 * dt * (C_U2 - C_V)
 
-        # (4) Second F-sweep: (I - θ dt A) U4 = U3 - θ dt A(V^n)
         U4 = np.empty((NX, NY))
         for j in range(NY):
             sigma = sigma_grid[j]
@@ -322,7 +303,6 @@ def _price_call_sabr_adi_beta_core(
 
             U4[:, j] = _thomas_tridiag(a, b, c, d)
 
-        # (5) Second σ-sweep: (I - θ dt B) V^{n+1} = U4 - θ dt B(V^n)
         V_new = np.empty((NX, NY))
         for i in range(NX):
             a = np.zeros(NY)
@@ -351,7 +331,6 @@ def _price_call_sabr_adi_beta_core(
 
         V = V_new
 
-    # Final boundaries
     for j in range(NY):
         V[0, j] = 0.0
         V[NX - 1, j] = F_grid[NX - 1] - K
@@ -359,7 +338,6 @@ def _price_call_sabr_adi_beta_core(
         V[i, 0] = V[i, 1]
         V[i, NY - 1] = V[i, NY - 2]
 
-    # Bilinear interpolation at (F0, sigma0)
     iF = int(np.searchsorted(F_grid, F0) - 1)
     if iF < 0:
         iF = 0
@@ -388,7 +366,6 @@ def _price_call_sabr_adi_beta_core(
     return price
 
 
-# ----------------------------- Public FD pricer ---------------------------------
 
 
 def price_call_sabr_adi_beta(
@@ -408,17 +385,7 @@ def price_call_sabr_adi_beta(
     NT: int = 800,
     debug: bool = False,
 ) -> Tuple[float, float]:
-    """
-    Price a forward call under SABR (general β) by 2D ADI FD in (F, σ).
 
-    PDE (forward numeraire, no discounting):
-        V_t = A(V) + B(V) + C(V),
-        A(V) = 0.5 σ^2 F^{2β} V_FF
-        B(V) = 0.5 ν^2 σ^2 V_σσ
-        C(V) = ρ ν σ^2 F^β V_{Fσ}.
-
-    Returns (price, Black_implied_vol).
-    """
     F0 = float(F0)
     sigma0 = float(sigma0)
     K = float(K)

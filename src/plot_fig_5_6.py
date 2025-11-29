@@ -8,16 +8,13 @@ import torch
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 
-from src.nn_arch import GlobalSmileNetVector  # if you use _load_model here
+from src.nn_arch import GlobalSmileNetVector  
 from src.data_vector import ten_strikes, F0, BETA
 from src.plotting_vector_integration import _interp_smooth
 from src.sabr_integrationF import sabr_implied_vol as sabr_int
 
-# ---------------------------------------------------------------------
-# Config / device
-# ---------------------------------------------------------------------
 SEED = 123
-OUT_DIR = "night_runs/phase2_integration_run"   # same as in phase-2 script
+OUT_DIR = "night_runs/phase2_integration_run" 
 
 DEVICE = torch.device(
     "mps" if torch.backends.mps.is_available() else
@@ -27,9 +24,7 @@ DEVICE = torch.device(
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 
-# ---------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------
+
 def build_model(width: int = 1000) -> torch.nn.Module:
     return GlobalSmileNetVector(hidden=(width,))
 
@@ -85,20 +80,13 @@ def _second_diff(y, x):
     return d2
 
 def _plot_fig56_single(outfile, panel_title, strikes, smile_ann_dec, smile_true_dec, T):
-    """
-    Plot vols / CDF / PDF and errors for ANN-1000 vs integration-based SABR.
-    Inputs:
-        strikes       : K/F grid (1D)
-        smile_ann_dec : ANN vols in decimals on that grid
-        smile_true_dec: integration SABR vols in decimals on that grid
-    """
+   
     K   = np.asarray(strikes, float).reshape(-1)
     ann = np.asarray(smile_ann_dec, float).reshape(-1)
     sab = np.asarray(smile_true_dec, float).reshape(-1)
     n = min(len(K), len(ann), len(sab))
     K, ann, sab = K[:n], ann[:n], sab[:n]
 
-    # for plotting, turn decimals into %
     ann_pct = 100.0 * ann
     sab_pct = 100.0 * sab
 
@@ -166,9 +154,7 @@ def _plot_fig56_single(outfile, panel_title, strikes, smile_ann_dec, smile_true_
     plt.close(fig)
     print(f"[Fig5/6] saved {outfile}")
 
-# ---------------------------------------------------------------------
-# Main fig-5/6 builder for vector ANN
-# ---------------------------------------------------------------------
+
 def make_figs_5_and_6_only_ann1000(out_dir, scalers, device):
     """
     Build the panel figures analogous to figs 5 & 6, comparing ANN-1000
@@ -212,7 +198,6 @@ def make_figs_5_and_6_only_ann1000(out_dir, scalers, device):
         r   = cfg["rho"]
         Kd  = cfg["strikes"]          # dense K/F grid (since F0 = 1)
 
-        # --- ANN smile via vector network (10 training nodes → dense grid) ---
         xln_nodes, K_nodes = ten_strikes(F0, a, nu, r, T)
         feats = np.concatenate([[T, a, nu, r], xln_nodes]).astype(np.float32)[None, :]
         X_std = (feats - x_mu) / x_sd
@@ -228,7 +213,6 @@ def make_figs_5_and_6_only_ann1000(out_dir, scalers, device):
         smile_ann_pct = _interp_smooth(kf_nodes, vol_nodes_pct, Kd)
         smile_ann_dec = smile_ann_pct / 100.0
 
-        # --- integration-SABR reference on same dense grid (decimals) ---
         smile_true_dec = np.array([
             sabr_int(F=F0, K=float(k), T=float(T),
                      alpha=float(a), beta=BETA, rho=float(r), nu=float(nu))
@@ -243,9 +227,7 @@ def make_figs_5_and_6_only_ann1000(out_dir, scalers, device):
         outfile = join(out_dir, f"{cfg['name']}.png")
         _plot_fig56_single(outfile, title, Kd, smile_ann_dec, smile_true_dec, T)
 
-# ---------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------
+
 def main():
     scalers_path = join(OUT_DIR, "scalers_vector.pkl")
     if not isfile(scalers_path):

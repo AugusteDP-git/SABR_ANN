@@ -8,23 +8,21 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from SABR_ANN.src.MaxK_minK import strike_ratio, ETA_S_MIN, ETA_S_MAX, ETA_SIGMA
-from SABR_ANN.src.sabr_true_beta_fd import sabr_true_iv_beta_fd
+from src.MaxK_minK import strike_ratio, ETA_S_MIN, ETA_S_MAX, ETA_SIGMA
+from src.sabr_true_beta_fd import sabr_true_iv_beta_fd
 
-# Global SABR forward
 F0 = 1.0
 
-# Domain (similar to your Phase-1 β data)
-T_MIN, T_MAX       = 1.0 / 365.0, 2.0      # 1D to 2Y
-SIG0_MIN, SIG0_MAX = 0.05, 0.50            # σ0
-RHO_MIN, RHO_MAX   = -0.90, 0.90           # ρ
-XI_1M_MIN, XI_1M_MAX = 0.05, 4.00          # ξ term-structure anchors
-TS = 1.0 / 12.0                            # 1M anchor
+T_MIN, T_MAX       = 1.0 / 365.0, 2.0      
+SIG0_MIN, SIG0_MAX = 0.05, 0.50            
+RHO_MIN, RHO_MAX   = -0.90, 0.90           
+XI_1M_MIN, XI_1M_MAX = 0.05, 4.00          
+TS = 1.0 / 12.0                            
 
-# β range
+
 BETA_MIN, BETA_MAX = 0.0, 1.0
 
-# FIG dict is useful if you want to reuse scenarios later
+
 FIG: Dict[int, tuple] = {
     2: (14.0 / 365.0, 0.30, 1.60, -0.60, "(T = 14D, σ₀ = 30%, ξ = 160%, ρ = −60%)", (25.0, 45.5)),
     3: (6.0 / 12.0,   0.30, 0.40,  0.00, "(T = 6M,  σ₀ = 30%, ξ = 40%,  ρ = 0%)",    (30.0, 34.5)),
@@ -33,20 +31,14 @@ FIG: Dict[int, tuple] = {
 
 
 def xi_bounds_for_T(T: float) -> Tuple[float, float]:
-    """
-    Same heuristic as in your existing vector data:
-      ξ(T) ~ scaled by 1/sqrt(T), clipped.
-    """
+    
     lo = XI_1M_MIN * np.sqrt(TS / max(T, 1e-6))
     hi = XI_1M_MAX * np.sqrt(TS / max(T, 1e-6))
     return max(0.01, lo), min(6.0, hi)
 
 
 def _build_strikes(F0: float, sigma0: float, rho: float, xi: float, T: float) -> np.ndarray:
-    """
-    Build 10 strike nodes via MaxK_minK strike_ratio, matching your existing setup.
-      ln(K/F0) spans [η_S_min, η_S_max] mapped by the lognormal ψ logic.
-    """
+    
     k_min = F0 * strike_ratio(F0, sigma0, rho, xi, T, ETA_S_MIN, ETA_SIGMA)
     k_max = F0 * strike_ratio(F0, sigma0, rho, xi, T, ETA_S_MAX, ETA_SIGMA)
     k_lo, k_hi = (min(k_min, k_max), max(k_min, k_max))
@@ -71,16 +63,9 @@ def _one_sample(
     fd_NY: int = 41,
     fd_NT: int = 600,
 ) -> tuple | None:
-    """
-    Build one (X, Y) pair:
-      X = [T, sigma0, xi, rho, beta, ln(K1/F0), ..., ln(K10/F0)]  shape (15,)
-      Y = [100 * σ_imp(K1), ..., 100 * σ_imp(K10)]               shape (10,)
+    
+    K = _build_strikes(F0, sigma0, rho, xi, T)  
 
-    Uses sabr_true_iv_beta_fd (FD solver) as label generator.
-    Returns None if anything non-finite occurs.
-    """
-    K = _build_strikes(F0, sigma0, rho, xi, T)  # (10,)
-    # FD labels (absolute vols)
     vols = sabr_true_iv_beta_fd(
         F=F0,
         K=K,
@@ -102,7 +87,7 @@ def _one_sample(
         [[T, sigma0, xi, rho, beta], xln],
         dtype=np.float32,
     )
-    targets = (100.0 * vols).astype(np.float32)  # store in % for consistency
+    targets = (100.0 * vols).astype(np.float32)  
     return feats, targets
 
 
@@ -110,10 +95,7 @@ def _one_sample_wrapper(
     T, sigma0, xi, rho, beta,
     fd_NX, fd_NY, fd_NT,
 ):
-    """
-    Small wrapper so we can call it from joblib.
-    Returns (X, Y) or None.
-    """
+  
     return _one_sample(
         F0, T, sigma0, xi, rho, beta,
         fd_NX=fd_NX, fd_NY=fd_NY, fd_NT=fd_NT,
@@ -130,9 +112,6 @@ def _sample_random_dataset(
     n_jobs: int = 16,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Randomly sample (T, sigma0, xi, rho, beta) and build a dataset of size n.
-    Resamples on failures.
-
     NOTE: FD is expensive. This uses joblib to parallelize over samples and
     tqdm to track progress.
     """
@@ -141,7 +120,7 @@ def _sample_random_dataset(
 
     with tqdm(total=n, desc="[FD-β] samples", unit="sample") as pbar:
         while len(X_list) < n:
-            # propose a small batch of parameter tuples
+
             batch_size = min(512, n - len(X_list))
             params = []
             for _ in range(batch_size):
@@ -153,7 +132,7 @@ def _sample_random_dataset(
                 xi     = float(rng.uniform(xi_lo, xi_hi))
                 params.append((T, sigma0, xi, rho, beta))
 
-            # run FD in parallel across this batch
+
             results = Parallel(n_jobs=n_jobs)(
                 delayed(_one_sample_wrapper)(
                     T, sigma0, xi, rho, beta,
@@ -162,7 +141,7 @@ def _sample_random_dataset(
                 for (T, sigma0, xi, rho, beta) in params
             )
 
-            # collect valid samples
+
             for res in results:
                 if res is None:
                     continue
@@ -179,10 +158,6 @@ def _sample_random_dataset(
 
 
 
-# -------------------------------------------------------------------
-# Public API: build & cache Phase-2 FD multi-β dataset
-# -------------------------------------------------------------------
-
 def sample_domain_grid_and_random_fd_beta(
     n_train: int = 20_000,
     n_val: int = 5_000,
@@ -192,14 +167,7 @@ def sample_domain_grid_and_random_fd_beta(
     fd_NY: int = 41,
     fd_NT: int = 600,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
-    """
-    Build the Phase-2 FD-based dataset with β input and cache it.
-
-    The environment variable PHASE2_FD_BETA_CACHE (if present) overrides `cache_path`.
-
-    Returns raw (unstandardized) arrays:
-      X_tr, Y_tr, X_va, Y_va, meta
-    """
+    
     if cache_path is None:
         cache_path = os.environ.get(
             "PHASE2_FD_BETA_CACHE",
@@ -245,12 +213,7 @@ def sample_domain_grid_and_random_fd_beta(
 
 
 def load_phase2_fd_beta_cached(path: str):
-    """
-    Load the cached Phase-2 FD-based multi-β dataset.
-
-    Returns:
-        (Xtr, Ytr, Xva, Yva, meta_dict) or None if missing.
-    """
+  
     if not os.path.isfile(path):
         return None
     data = np.load(path, allow_pickle=True)

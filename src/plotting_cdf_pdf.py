@@ -21,7 +21,6 @@ def _interp_smooth(x_nodes, y_nodes, xq):
             return np.interp(xq, x_nodes, y_nodes)
 
 def _black_call_forward(F: float, K: np.ndarray, T: float, sigma: np.ndarray) -> np.ndarray:
-    """Black (1976) call, *undiscounted forward numeraire* (no DF)."""
     eps = 1e-12
     sig = np.maximum(sigma, eps)
     volT = sig * np.sqrt(max(T, 1e-12))
@@ -31,7 +30,6 @@ def _black_call_forward(F: float, K: np.ndarray, T: float, sigma: np.ndarray) ->
     return F * norm.cdf(d1) - K * norm.cdf(d2)
 
 def _cdf_pdf_from_prices(K: np.ndarray, C: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    # first derivative: ∂C/∂K  (use central differences on nonuniform grids too)
     dC_dK = np.gradient(C, K, edge_order=2)
     cdf   = 1.0 + dC_dK
     pdf   = np.gradient(dC_dK, K, edge_order=2)
@@ -46,50 +44,43 @@ def plot_fig_cdf_pdf(fig_id: int,
                      show_nodes: bool = False,
                      points: int = 401,
                      ann_label: str = "ANN(1×1000)"):
-    """
-    Builds 6-panel figure: (a) smile, (b) CDF, (c) pdf,
-    (d-f) deltas ANN - Approx for the three panels.
-    """
-    # ---- scenario ----
+  
     T, s0, xi, rho, title_suffix, _ylims_smile = FIG[fig_id]
 
-    # scalers (vector case)
     x_mu = np.asarray(scalers["x_mu"], dtype=np.float32)
     x_sd = np.asarray(scalers["x_sd"], dtype=np.float32)
     y_mu = np.asarray(scalers["y_mu"], dtype=float)
     y_sd = np.asarray(scalers["y_sd"], dtype=float)
 
-    # 10 nodes & feature vector
+
     xln_nodes, K_nodes = ten_strikes(F0, s0, rho, xi, T)
     feats = np.concatenate([[T, s0, xi, rho], xln_nodes]).astype(np.float32)[None, :]
     Xs = (feats - x_mu) / x_sd
 
-    # strike grids
+
     kf_nodes = (K_nodes / F0).astype(np.float64)
     k_min, k_max = float(kf_nodes.min()), float(kf_nodes.max())
     kf_dense = np.linspace(k_min, k_max, points).astype(np.float64)
     K_dense  = F0 * kf_dense
     K_nodes  = F0 * kf_nodes
 
-    # SABR approx smile (%)
+
     sabr_sigma = np.asarray(sabr_implied_vol(F0, K_dense, T, s0, BETA, rho, xi), float)
     ref_dense  = 100.0 * sabr_sigma
 
-    # ANN smile (%)
+
     with torch.no_grad():
         Xs_t = torch.from_numpy(Xs).float().to(device)
         y_z  = model(Xs_t).cpu().numpy()[0]
         y_nodes = y_mu + y_sd * y_z                               # %
         y_dense = _interp_smooth(kf_nodes, y_nodes, kf_dense)     # %
 
-    # ---- CDF & pdf from option prices ----
     C_ref = _black_call_forward(F0, K_dense, T, sabr_sigma)
     C_ann = _black_call_forward(F0, K_dense, T, y_dense / 100.0)
 
     cdf_ref, pdf_ref = _cdf_pdf_from_prices(K_dense, C_ref)
     cdf_ann, pdf_ann = _cdf_pdf_from_prices(K_dense, C_ann)
 
-    # ---- plot style ----
     plt.rcParams.update({
         "figure.figsize": (12.0, 8.0),
         "savefig.dpi": 180,

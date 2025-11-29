@@ -30,31 +30,25 @@ def plot_fig(fig_id: int,
              beta: float,
              show_nodes: bool = False,
              points: int = 201):
-    """Paper-style figure for the vector ANN (10 outputs = smile nodes), at a given β."""
     T, s0, xi, rho, title_suffix, _ = FIG[fig_id]  # ignore fixed ylims
 
-    # --- scalers
     x_mu = np.asarray(scalers["x_mu"], dtype=np.float32)
     x_sd = np.asarray(scalers["x_sd"], dtype=np.float32)
     y_mu = np.asarray(scalers["y_mu"], dtype=float)
     y_sd = np.asarray(scalers["y_sd"], dtype=float)
 
-    # --- strike nodes & features
     xln_nodes, K_nodes = ten_strikes(F0, s0, rho, xi, T)
     feats = np.concatenate([[T, s0, xi, rho], xln_nodes]).astype(np.float32)[None, :]
     Xs = (feats - x_mu) / x_sd
 
-    # --- grid
     kf_nodes = (K_nodes / F0).astype(np.float64)
     k_min, k_max = float(kf_nodes.min()), float(kf_nodes.max())
     kf_dense = np.linspace(k_min, k_max, points).astype(np.float64)
 
-    # SABR reference (in %) *with same β*
     ref_dense = 100.0 * np.asarray(
         sabr_implied_vol(F0, F0 * kf_dense, T, s0, beta, rho, xi), float
     )
 
-    # --- forward pass
     preds_dense, node_sets, labels = [], [], []
     with torch.no_grad():
         Xs_t = torch.from_numpy(Xs).float().to(device)
@@ -66,14 +60,12 @@ def plot_fig(fig_id: int,
             node_sets.append(y_nodes)
             labels.append(f"ANN ({hidden[0]})")
 
-    # --- compute automatic y-limits
     all_y = [ref_dense] + preds_dense
     y_min = min(map(np.min, all_y))
     y_max = max(map(np.max, all_y))
     y_margin = 0.05 * (y_max - y_min)
     ylims = (y_min - y_margin, y_max + y_margin)
 
-    # --- plot style
     plt.rcParams.update({
         "figure.figsize": (12.0, 6.6),
         "savefig.dpi": 180,
@@ -84,10 +76,8 @@ def plot_fig(fig_id: int,
     })
     palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
 
-    # ---- figure
     fig = plt.figure()
 
-    # (a) Smiles
     ax1 = plt.subplot(1, 2, 1)
     for i, (y_dense, y_nodes, lab) in enumerate(zip(preds_dense, node_sets, labels)):
         color = palette[i % len(palette)]
@@ -103,7 +93,6 @@ def plot_fig(fig_id: int,
     ax1.legend(loc="upper center", bbox_to_anchor=(0.5, -0.20),
                ncol=3, frameon=True, framealpha=0.9)
 
-    # (b) Errors
     ax2 = plt.subplot(1, 2, 2)
     all_err = []
     for i, (y_dense, lab) in enumerate(zip(preds_dense, labels)):

@@ -52,16 +52,13 @@ def ten_strikes(F: float, s0: float, rho: float, xi: float, T: float):
 
 
 def _safe_vols(F0, K, T, s0, beta, rho, xi, max_shrink=4):
-    """
-    Try to get finite vols; if not, shrink strike box progressively.
-    Uses the unified β-aware SABR label function.
-    """
+  
     scale = 1.0
     for _ in range(max_shrink):
         vols = sabr_implied_vol_beta(F0, K, T, s0, beta, rho, xi).astype(np.float32)
         if np.isfinite(vols).all():
             return vols
-        # shrink strikes toward ATM and retry
+
         scale *= 0.8
         logK = np.log(K / F0)
         K = F0 * np.exp(scale * logK)
@@ -69,12 +66,7 @@ def _safe_vols(F0, K, T, s0, beta, rho, xi, max_shrink=4):
 
 
 def _one_sample(F0, T, s0, beta, rho, xi):
-    """
-    Build one clean (X, Y) pair or return None if unstable.
-
-    Features: [T, s0, xi, rho, beta, x1..x10]
-    Targets: 10 vols in percent.
-    """
+    
     xln, K = ten_strikes(F0, s0, rho, xi, T)
     vols = _safe_vols(F0, K, T, s0, beta, rho, xi)
     if vols is None:
@@ -87,23 +79,7 @@ def sample_domain_grid_and_random_with_beta(
     n_random_train: int = 150_000,
     n_val: int = 50_000,
 ):
-    """
-    Return standardized (Xtr, Ytr, Xva, Yva, scalers) for *multi-β* training.
-
-    Inputs:
-        - T in [T_MIN, T_MAX]
-        - s0 in [SIG0_MIN, SIG0_MAX]
-        - rho in [RHO_MIN, RHO_MAX]
-        - xi with tenor-dependent bounds
-        - beta ~ Uniform(0, 1)
-
-    Features per sample:
-        [T, s0, xi, rho, beta, x1..x10]  (dim = 15)
-
-    Targets:
-        10 SABR implied vols (in %), corresponding to the 10 strike nodes.
-    """
-    # ----- deterministic grid over (T, s0, xi, rho); beta sampled per point -----
+    
     T_grid = np.linspace(T_MIN, T_MAX, 100)
     s0_g   = np.linspace(SIG0_MIN, SIG0_MAX, 10)
     rho_g  = np.linspace(RHO_MIN, RHO_MAX, 10)
@@ -124,7 +100,7 @@ def sample_domain_grid_and_random_with_beta(
 
     Xg = np.stack(Xg); Yg = np.stack(Yg)
 
-    # ----- random samples (train + val) with beta ~ U(0,1) -----
+
     def rnd(n):
         Xr, Yr = [], []
         while len(Xr) < n:
@@ -145,7 +121,7 @@ def sample_domain_grid_and_random_with_beta(
     X_tr = np.concatenate([Xg, Xr_tr], axis=0)
     Y_tr = np.concatenate([Yg, Yr_tr], axis=0)
 
-    # ----- standardize using training stats -----
+
     x_mu = X_tr.mean(0); x_sd = X_tr.std(0) + 1e-8
     y_mu = Y_tr.mean(0); y_sd = Y_tr.std(0) + 1e-8
 

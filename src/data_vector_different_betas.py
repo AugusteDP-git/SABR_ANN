@@ -11,19 +11,18 @@ from src.sabr_hagan_different_betas import sabr_implied_vol
 SEED = 123
 np.random.seed(SEED); random.seed(SEED)
 
-# Global forward
 F0 = 1.0
 
-# Domains (paper-like)
+
 T_MIN, T_MAX = 1.0/365.0, 2.0
 SIG0_MIN, SIG0_MAX = 0.05, 0.50
 RHO_MIN,  RHO_MAX  = -0.90, +0.90
 
-# ξ term structure heuristic, anchored at 1M
+
 TS = 1.0/12.0
 XI_1M_MIN, XI_1M_MAX = 0.05, 4.00
 
-# Figure presets (same as before)
+
 FIG = {
     2: (14.0/365.0, 0.30, 1.60, -0.60, "(T = 14D, σ₀ = 30%, ξ = 160%, ρ = −60%)", (25.0, 45.5)),
     3: (6.0/12.0,   0.30, 0.40,  0.00, "(T = 6M,  σ₀ = 30%, ξ = 40%,  ρ = 0%)",    (30.0, 34.5)),
@@ -82,8 +81,7 @@ def sample_domain_grid_and_random(
     *,
     beta: float = 1.0,
 ):
-    """Return standardized (Xtr, Ytr, Xva, Yva, scalers) **for the given β**."""
-    # deterministic 100x10x10 grid over (T, s0, xi, rho)
+
     T_grid = np.linspace(T_MIN, T_MAX, 100)
     s0_g   = np.linspace(SIG0_MIN, SIG0_MAX, 10)
     rho_g  = np.linspace(RHO_MIN, RHO_MAX, 10)
@@ -102,7 +100,7 @@ def sample_domain_grid_and_random(
                     Xg.append(feats); Yg.append(vols)
     Xg = np.stack(Xg); Yg = np.stack(Yg)
 
-    # random chunks
+
     def rnd(n):
         Xr, Yr = [], []
         for _ in range(n):
@@ -122,7 +120,7 @@ def sample_domain_grid_and_random(
     X_tr = np.concatenate([Xg, Xr_tr], axis=0)
     Y_tr = np.concatenate([Yg, Yr_tr], axis=0)
 
-    # standardize (use train stats)
+
     x_mu = X_tr.mean(0); x_sd = X_tr.std(0) + 1e-8
     y_mu = Y_tr.mean(0); y_sd = Y_tr.std(0) + 1e-8
 

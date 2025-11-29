@@ -12,10 +12,6 @@ from src.sabr_labels_beta import sabr_implied_vol_beta
 from src.sabr_fd_beta import price_call_sabr_adi_beta
 
 
-# ---------------------------------------------------------------------------
-# Small helper: quiet 1D interpolator
-# ---------------------------------------------------------------------------
-
 def _interp_smooth(x_nodes, y_nodes, xq):
     """
     Quiet 1D interpolator: tries PCHIP, then CubicSpline, then falls back to np.interp.
@@ -31,9 +27,6 @@ def _interp_smooth(x_nodes, y_nodes, xq):
             return np.interp(xq, x_nodes, y_nodes)
 
 
-# ---------------------------------------------------------------------------
-# Building smiles from ANN / SABR / FD
-# ---------------------------------------------------------------------------
 
 def _build_ann_smile_for_beta(
     beta: float,
@@ -48,10 +41,8 @@ def _build_ann_smile_for_beta(
     scalers: dict,
     device: torch.device,
 ) -> np.ndarray:
-    """
-    For a given β, build the ANN smile on a dense K/F grid (in %).
-    Uses the vector ANN with features [T, s0, xi, rho, beta, x1..x10].
-    """
+  
+  
     x_mu = np.asarray(scalers["x_mu"], dtype=np.float32)
     x_sd = np.asarray(scalers["x_sd"], dtype=np.float32)
     y_mu = np.asarray(scalers["y_mu"], dtype=np.float32)
@@ -77,10 +68,7 @@ def _build_sabr_smile_for_beta(
     rho: float,
     kf_dense: np.ndarray,
 ) -> np.ndarray:
-    """
-    For a given β, build the Hagan SABR smile on a dense K/F grid (in %),
-    using the unified β-aware Hagan dispatcher.
-    """
+
     K_dense = F0 * kf_dense
     vols = sabr_implied_vol_beta(
         F0, K_dense, T=T, alpha=s0, beta=beta, rho=rho, nu=xi
@@ -100,17 +88,11 @@ def _build_fd_smile_for_beta(
     fd_NY: int = 41,
     fd_NT: int = 600,
 ) -> np.ndarray:
-    """
-    For a given β, build the *FD (PDE)* smile on a dense K/F grid (in %).
-
-    This calls the general-β finite-difference pricer price_call_sabr_adi_beta
-    for each strike and returns the implied vols in percent.
-    """
+    
     K_dense = F0 * kf_dense
     ivs = np.empty_like(K_dense, dtype=float)
 
     for i, K in enumerate(K_dense):
-        # FD pricer returns (price, iv); we keep the implied vol
         _, iv = price_call_sabr_adi_beta(
             F0,
             s0,
@@ -129,9 +111,8 @@ def _build_fd_smile_for_beta(
     return 100.0 * ivs  # convert to vol points (%)
 
 
-# ---------------------------------------------------------------------------
-# ORIGINAL FUNCTION (Phase 1): SABR (Hagan) vs ANN
-# ---------------------------------------------------------------------------
+
+
 
 def plot_3d_smile_beta_surface(
     fig_id: int,
@@ -145,26 +126,16 @@ def plot_3d_smile_beta_surface(
     n_beta: int = 21,
     n_strikes: int = 101,
 ):
-    """
-    ORIGINAL version used in Phase-1:
-    2-panel figure with Hagan SABR vs ANN, and ANN–SABR error.
 
-    Kept for backward compatibility.
-    """
-
-    # --- scenario from FIG dictionary ---
     T, s0, xi, rho, title_suffix, _ = FIG[fig_id]
 
-    # --- strike nodes and grids (independent of β) ---
     xln_nodes, K_nodes = ten_strikes(F0, s0, rho, xi, T)
     kf_nodes = (K_nodes / F0).astype(np.float64)
     k_min, k_max = float(kf_nodes.min()), float(kf_nodes.max())
     kf_dense = np.linspace(k_min, k_max, n_strikes).astype(np.float64)
 
-    # --- β grid ---
     beta_grid = np.linspace(beta_min, beta_max, n_beta).astype(np.float64)
 
-    # storage for surfaces: shape (n_beta, n_strikes)
     sabr_surface = np.zeros((n_beta, n_strikes), dtype=float)
     ann_surface  = np.zeros((n_beta, n_strikes), dtype=float)
 
@@ -211,7 +182,6 @@ def plot_3d_smile_beta_surface(
 
     fig = plt.figure()
 
-    # (1) SABR vs ANN surface
     ax1 = fig.add_subplot(1, 2, 1, projection="3d")
     ax1.plot_surface(
         KF_mesh, BETA_mesh, sabr_surface,
@@ -232,7 +202,6 @@ def plot_3d_smile_beta_surface(
     ax1.set_zlabel("IV [%]")
     ax1.set_title(f"SABR vs ANN IV surface\n{title_suffix}")
 
-    # (2) Error surface (ANN - SABR)
     ax2 = fig.add_subplot(1, 2, 2, projection="3d")
     surf_err = ax2.plot_surface(
         KF_mesh, BETA_mesh, err_surface,
@@ -255,9 +224,6 @@ def plot_3d_smile_beta_surface(
     print(f"[3D Plot β] (Hagan ref) fig={fig_id} → {out_png}")
 
 
-# ---------------------------------------------------------------------------
-# NEW FUNCTION (Phase 2): FD true IV vs ANN, plus SABR–FD error
-# ---------------------------------------------------------------------------
 
 def plot_3d_smile_beta_surface_fdtrue(
     fig_id: int,
@@ -274,29 +240,14 @@ def plot_3d_smile_beta_surface_fdtrue(
     fd_NY: int = 41,
     fd_NT: int = 600,
 ):
-    """
-    Phase-2 version:
 
-      • Uses the **finite-difference (FD) implied vol** as the true IV surface.
-      • Plots ANN vs FD.
-      • Adds a third panel with SABR(Hagan) vs FD error.
-
-    Panels:
-      (1) FD vs ANN IV surfaces.
-      (2) ANN - FD (vol points).
-      (3) SABR - FD (vol points).
-    """
-
-    # --- scenario from FIG dictionary ---
     T, s0, xi, rho, title_suffix, _ = FIG[fig_id]
 
-    # --- strike nodes and grids ---
     xln_nodes, K_nodes = ten_strikes(F0, s0, rho, xi, T)
     kf_nodes = (K_nodes / F0).astype(np.float64)
     k_min, k_max = float(kf_nodes.min()), float(kf_nodes.max())
     kf_dense = np.linspace(k_min, k_max, n_strikes).astype(np.float64)
 
-    # --- β grid ---
     beta_grid = np.linspace(beta_min, beta_max, n_beta).astype(np.float64)
 
     # surfaces: shape (n_beta, n_strikes)

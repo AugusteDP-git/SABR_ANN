@@ -15,7 +15,6 @@ from src.data_vector import FIG
 from src.nn_arch import GlobalSmileNetVector
 from src.plotting_vector_integration import plot_fig as plot_fig_integration
 
-# ---- paths / device ----------------------------------------------------
 OUT_DIR = "night_runs/phase2_integration_run"
 
 DEVICE = torch.device(
@@ -25,10 +24,9 @@ DEVICE = torch.device(
 )
 
 WIDTHS = [250, 500, 750, 1000]
-SHORT_BOUND = 1.0  # 1Y boundary as in training
+SHORT_BOUND = 1.0  
 
 
-# ---- helpers -----------------------------------------------------------
 def _load_model(path: str, width: int) -> torch.nn.Module:
     m = GlobalSmileNetVector(hidden=(width,)).to(DEVICE)
     try:
@@ -42,8 +40,7 @@ def _load_model(path: str, width: int) -> torch.nn.Module:
     return m
 
 
-# ---- main --------------------------------------------------------------
-# ---- API function ------------------------------------------------------
+
 def make_figs_2_3_4_integration(
     out_dir: str | None = None,
 ) -> None:

@@ -7,7 +7,6 @@ from typing import List, Tuple
 from src.data_vector import FIG, ten_strikes, F0, BETA
 from src.sabr_hagan import sabr_implied_vol
 
-# --- tiny, quiet interpolator ---
 def _interp_smooth(x_nodes, y_nodes, xq):
     try:
         from scipy.interpolate import PchipInterpolator
@@ -27,35 +26,26 @@ def plot_fig(fig_id: int,
              device: torch.device,
              show_nodes: bool = False,
              points: int = 201):
-    """
-    Paper-style figure for the vector ANN (10 outputs = smile nodes).
-    """
 
-    # ---- scenario from FIG dict ----
     T, s0, xi, rho, title_suffix, ylims = FIG[fig_id]
 
-    # scalers (vector case: x_mu/x_sd len=14, y_mu/y_sd len=10)
     x_mu = np.asarray(scalers["x_mu"], dtype=np.float32)
     x_sd = np.asarray(scalers["x_sd"], dtype=np.float32)
     y_mu = np.asarray(scalers["y_mu"], dtype=float)
     y_sd = np.asarray(scalers["y_sd"], dtype=float)
 
-    # 10 strike nodes and feature vector: [T, s0, xi, rho, x1..x10]
     xln_nodes, K_nodes = ten_strikes(F0, s0, rho, xi, T)
     feats = np.concatenate([[T, s0, xi, rho], xln_nodes]).astype(np.float32)[None, :]
     Xs = (feats - x_mu) / x_sd
 
-    # ---- K/F grid ----
     kf_nodes = (K_nodes / F0).astype(np.float64)
     k_min, k_max = float(kf_nodes.min()), float(kf_nodes.max())
     kf_dense = np.linspace(k_min, k_max, points).astype(np.float64)
 
-    # SABR reference (in %)
     ref_dense = 100.0 * np.asarray(
         sabr_implied_vol(F0, F0 * kf_dense, T, s0, BETA, rho, xi), float
     )
 
-    # ---- forward pass for all models ----
     preds_dense, node_sets, labels = [], [], []
     with torch.no_grad():
         Xs_t = torch.from_numpy(Xs).float().to(device)
@@ -67,7 +57,6 @@ def plot_fig(fig_id: int,
             node_sets.append(y_nodes)
             labels.append(f"ANN ({hidden[0]})")
 
-    # ---- Matplotlib style ----
     plt.rcParams.update({
         "figure.figsize": (12.0, 6.6),
         "savefig.dpi": 180,
@@ -78,8 +67,7 @@ def plot_fig(fig_id: int,
     })
     palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
 
-    # ---- figure
-    # ---- figure (a) Smiles ----
+
     fig = plt.figure()
     ax1 = plt.subplot(1, 2, 1)
     for i, (y_dense, y_nodes, lab) in enumerate(zip(preds_dense, node_sets, labels)):
@@ -103,7 +91,7 @@ def plot_fig(fig_id: int,
         framealpha=0.9
     )
 
-    # ---- figure (b) Errors ----
+
     ax2 = plt.subplot(1, 2, 2)
     all_err = []
     for i, (y_dense, lab) in enumerate(zip(preds_dense, labels)):
@@ -128,7 +116,7 @@ def plot_fig(fig_id: int,
         framealpha=0.9
     )
 
-    # ---- layout ----
+    # ---- layout ---
     fig.suptitle(f"ANN smiles vs SABR approximation {title_suffix}", y=0.99)
     fig.tight_layout(rect=[0, 0.05, 1, 0.95])  # leave room for bottom legends
     fig.savefig(out_png, dpi=180, bbox_inches="tight")
