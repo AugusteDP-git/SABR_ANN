@@ -14,12 +14,14 @@ from src.plotting_vector_different_betas import plot_fig
 from src.sabr_hagan_different_betas import sabr_implied_vol as sabr_implied_vol
 
 
+# ---------------- Device & seeds ----------------
 SEED = 123
 _FORCED_DEVICE = os.getenv("GLOBAL_DEVICE", "").strip().lower()
 DEVICE = torch.device(_FORCED_DEVICE if _FORCED_DEVICE else ("mps" if torch.backends.mps.is_available() else "cpu"))
 torch.manual_seed(SEED); np.random.seed(SEED)
 
-ROOT_OUT    = "night_runs/phase1_run"   
+# ---------------- Phase-1 knobs -----------------
+ROOT_OUT    = "night_runs/phase1_run"   # β-specific subfolders are created inside
 EPOCHS      = 2_000
 BATCH       = 512
 MIN_LR      = 1e-8
@@ -32,6 +34,7 @@ EMA_BETA    = 0.999
 T_COL       = 0
 SHORT_BOUND = 1.0
 
+# Per-width overrides
 PER_WIDTH = {
     250: dict(init_lr=3.0e-3, gamma=0.9990, patience= 8, tol=5e-4),
     500: dict(init_lr=3.0e-3, gamma=0.9990, patience= 8, tol=5e-4),
@@ -40,7 +43,7 @@ PER_WIDTH = {
 }
 WIDTHS = [250, 500, 750, 1000]
 
-
+# β sweep
 BETAS = [0.0, 0.3, 0.5, 0.7]
 
 
@@ -100,6 +103,7 @@ def train_one_width(hidden, Xtr, Ytr, Xva, Yva, *, epochs, batch,
         va_loss = va_sum / max(1, n)
         sched.step(va_loss)
 
+        #if ep % 10 == 0 or ep == 1:
         print(f"  ep {ep:5d}/{epochs} | tr={tr_loss:.3e} | va={va_loss:.3e} | lr={opt.param_groups[0]['lr']:.2e}")
         if va_loss < best - 1e-9:
             best = va_loss
@@ -123,14 +127,16 @@ def main():
         print(f"[Phase-1] β={beta}  →  {OUT_DIR}")
         print("="*76)
 
+        # ----- Data (Phase 1 approximate labels) -----
         Xtr_raw, Ytr_raw, Xva_raw, Yva_raw, scalers = sample_domain_grid_and_random(beta=beta)
         with open(join(OUT_DIR, "scalers_vector.pkl"), "wb") as f:
             pickle.dump(scalers, f)
 
+        # ----- Split by T once -----
         (Xtr_s, Ytr_s), (Xtr_l, Ytr_l) = split_by_maturity(Xtr_raw, Ytr_raw)
         (Xva_s, Yva_s), (Xva_l, Yva_l) = split_by_maturity(Xva_raw, Yva_raw)
 
-
+        # ----- Train each width for short/long -----
         for W in WIDTHS:
             cfg = PER_WIDTH[W]
             hidden = (W,)
@@ -155,7 +161,7 @@ def main():
                 torch.save(m.state_dict(), join(ckdir, ck_name))
                 print(f"[Save β={beta}] → {ckdir}/{ck_name}")
 
-
+        # ----- Paper-style figs (2–4) -----
         print("\n[Plot] Generating diagnostic figures (2–4)…")
         with open(join(OUT_DIR, "scalers_vector.pkl"), "rb") as f:
             scalers_for_plot = pickle.load(f)
